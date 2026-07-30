@@ -1,0 +1,64 @@
+services:
+  demo-core-api:
+    build:
+      context: ./services/demo-core-api
+    environment:
+      DEMO_DATABASE_URL: sqlite:////app/data/demo.db
+    ports:
+      - "8001:8000"
+    volumes:
+      - demo-core-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  ai-api:
+    build:
+      context: .
+      dockerfile: services/ai-api/Dockerfile
+    environment:
+      DEMO_CORE_API_BASE_URL: http://demo-core-api:8000
+      AI_MODE: ${AI_MODE:-local}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-terra}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-1800}
+      SESSION_MAX_TURNS: ${SESSION_MAX_TURNS:-10}
+      KNOWLEDGE_BASE_PATH: /app/knowledge-base
+    ports:
+      - "8000:8000"
+    depends_on:
+      demo-core-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: ./apps/web
+    environment:
+      AI_API_INTERNAL_URL: http://ai-api:8000
+      DEMO_CORE_API_INTERNAL_URL: http://demo-core-api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      ai-api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  demo-core-data:
