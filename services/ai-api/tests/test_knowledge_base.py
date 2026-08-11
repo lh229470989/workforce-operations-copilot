@@ -41,3 +41,26 @@ def test_refuses_when_policy_evidence_is_too_weak():
     knowledge_base = PolicyKnowledgeBase(KNOWLEDGE_ROOT)
 
     assert knowledge_base.search("What is the spaceship parking policy?") is None
+
+
+def test_compound_question_retrieves_complementary_sections_with_coverage():
+    knowledge_base = PolicyKnowledgeBase(KNOWLEDGE_ROOT)
+    result = knowledge_base.search(
+        "What are the submission deadline and manager approval rules?"
+    )
+
+    assert result is not None
+    assert {citation.section for citation in result.citations} >= {
+        "Weekly submission deadline",
+        "Review and corrections",
+    }
+    assert result.evidence_coverage >= 0.55
+    assert result.retrieval_mode == "hybrid"
+
+
+def test_compound_question_refuses_when_material_concept_is_unsupported():
+    knowledge_base = PolicyKnowledgeBase(KNOWLEDGE_ROOT)
+
+    assert knowledge_base.search(
+        "What are the submission deadline and spaceship parking rules?"
+    ) is None

@@ -7,10 +7,11 @@ A secure, self-hosted demo of an AI copilot for internal operations. It answers 
 The first full-stack demo milestone is implemented:
 
 - `services/demo-core-api` provides the synthetic workforce system.
-- `services/ai-api` provides role-aware LangGraph orchestration with read-only
-  tools and dry-run-only time drafting.
+- `services/ai-api` provides LLM-first, role-aware LangGraph orchestration with
+  grounded answer generation, read-only tools, and dry-run-only single or
+  batch time drafting.
 - `apps/web` provides the chat workspace, tool-event cards, charts, demo-role
-  switching, and an explicit confirmation card.
+  switching, live SSE agent status, and an explicit confirmation card.
 - `knowledge-base` contains original fictional policies used by a local
   evidence-threshold retriever with structured citations.
 - Release assurance includes an authored evaluation set, request metrics,
@@ -22,6 +23,10 @@ Start the implemented service with:
 docker compose up --build
 ```
 
+Copy `.env.example` to `.env` and set `OPENAI_API_KEY` to run the real LLM
+agent. With no key, the same stack remains available as an explicitly labeled
+`local fallback`; it does not pretend that deterministic routing is a model.
+
 Then open `http://localhost:3000` for the demo workspace,
 `http://localhost:8000/docs` for the AI API, or `http://localhost:8001/docs`
 for the Core API. See
@@ -31,12 +36,19 @@ personas and write-confirmation examples, and
 model configuration. Web verification steps are in
 [`apps/web/README.md`](apps/web/README.md).
 
-## Planned demo
+## Implemented demo
 
 - Ask policy questions with cited knowledge-base sources.
 - Query synthetic projects and time entries in natural language.
+- Review personal time-entry suggestions derived from recent fictional work.
 - Draft a time entry, inspect a dry-run preview, then explicitly approve it.
+- Draft up to 10 time entries as one atomic dry-run and confirmation.
+- Let an authorized manager propose approval or rejection for an exact entry,
+  then confirm it through the same separate write boundary.
 - Compare monthly project hours with a chart.
+- Compare 2–4 authorized project or date slices through a validated multi-tool plan.
+- Ask compound policy questions with hybrid retrieval and evidence coverage.
+- Run declarative analytics through a role-scoped, query-only SQL compiler.
 - Demonstrate role-aware access for employee, manager, and admin personas.
 
 ## Architecture
@@ -48,6 +60,13 @@ Next.js web app → FastAPI AI API → tools / RAG / policy checks → Demo Core
 The Next.js app proxies requests server-side to the LangGraph-based AI API and
 the synthetic workforce Core API so the browser never becomes the
 authorization boundary.
+
+架构说明从 [`docs/README.md`](docs/README.md) 开始，包含：
+
+- [`系统架构总览`](docs/system-overview.md)
+- [`Agent 运行时与 LLM 调用链`](docs/agent-runtime.md)
+- [`权限、安全与上下文管理`](docs/security-and-context.md)
+- [`本地运行与调试`](docs/local-development.md)
 
 ## Safety boundary
 

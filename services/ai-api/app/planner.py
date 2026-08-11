@@ -1,61 +1,28 @@
 import json
+import logging
 import re
 from datetime import date, timedelta
 from decimal import Decimal
 from hashlib import sha256
-from typing import Protocol
+from typing import Any, Protocol
 
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 
 from .conversation_context import (
     infer_local_conversation_relation,
     resolve_plan_context,
 )
-from .schemas import AgentPlan, PlannerContext
+from .schemas import (
+    AnalysisStep,
+    AgentPlan,
+    AnalyticsQuerySpec,
+    PlannerContext,
+    TimeEntryDraftItem,
+)
 
 PROJECT_NAMES = ("Apollo", "Beacon", "Cedar")
-
-PLANNER_INSTRUCTIONS = """
-You plan one safe operation for a fictional workforce assistant.
-
-Available intents:
-- current_user: show the current fictional actor profile.
-- list_departments: list role-scoped departments.
-- list_employees: list role-scoped employees or team members.
-- list_projects: list visible projects.
-- project_members: list visible members for one project.
-- time_entries: list role-scoped time entries, optionally by status/project/date.
-- hours_by_project: total role-scoped hours, optionally by project/date range.
-- summary: summarize hours by workflow status.
-- monthly_chart: monthly hours grouped by project.
-- pending_team: inspect pending submitted time and explain approval eligibility.
-- policy_question: answer from the supplied AcmeWorks policy knowledge base.
-- draft_time_entry: create a dry-run preview only.
-- capabilities: explain supported actions.
-- unknown: the request cannot be mapped safely.
-
-Authorization and write boundaries:
-- The server supplies the actor identity. Never infer or change it.
-- Read tools are role-scoped by the downstream server.
-- The only write-capable tool creates a dry-run preview. Never confirm it.
-- There is no approval write tool.
-- A draft requires project, work_date, hours, and description. Leave missing
-  fields null; do not invent them.
-- Resolve unambiguous relative read ranges such as today, yesterday, this/last
-  week, this/last month, or the last N days from the supplied current date.
-- The limit field applies only to time-entry lists, not hour totals.
-- Never invent a missing date for a time-entry draft.
-- Decide whether the request is independent, refines the previous read, switches
-  the subject of the previous read, or references authoritative actor context.
-- For a follow-up, set conversation_relation and list only the omitted read
-  filters that should be reused in inherit_fields.
-- Use project_reference="recent" for phrases such as "my recent project"; do
-  not guess a project name from conversation prose.
-- Leave field_resolutions empty. The server records field provenance after it
-  applies inheritance and actor-context policy.
-Return exactly one AgentPlan.
-""".strip()
-
+logger = logging.getLogger(__name__)
 
 def _extract_project_name(text: str) -> str | None:
     lowered = text.lower()
@@ -87,6 +54,166 @@ def _extract_project_name(text: str) -> str | None:
         if match and match.group(1).lower() not in ignored:
             return match.group(1)
     return None
+
+
+def _parse_batch_entries(text: str, today: date) -> list[TimeEntryDraftItem]:
+    """Parse explicit semicolon/newline-separated items for safe fallback."""
+
+    entries: list[TimeEntryDraftItem] = []
+    for segment in re.split(r"[;；\n]+", text):
+        project_name = _extract_project_name(segment)
+        date_match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", segment)
+        hours_match = re.search(
+            r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|小时)",
+            segment,
+            re.IGNORECASE,
+        )
+        description_match = re.search(
+            r"(?:description|描述|备注)(?:\s*(?:is|是|为|[:：]))?\s*(.+)$",
+            segment,
+            re.IGNORECASE,
+        )
+        relative_today = "today" in segment.lower() or "今天" in segment
+        if not any((project_name, date_match, hours_match, description_match)):
+            continue
+        entries.append(
+            TimeEntryDraftItem(
+                project_name=project_name,
+                work_date=(
+                    date.fromisoformat(date_match.group())
+                    if date_match
+                    else today if relative_today else None
+                ),
+                hours=(
+                    Decimal(hours_match.group(1)) if hours_match else None
+                ),
+                description=(
+                    description_match.group(1).strip()
+                    if description_match
+                    else None
+                ),
+            )
+        )
+    return entries
+
+
+def _parse_approval_action(
+    text: str,
+) -> tuple[int | None, str | None, str | None]:
+    """Extract only an explicitly named entry, decision, and optional comment."""
+
+    lowered = text.lower()
+    entry_match = re.search(
+        r"(?:time\s*entry|entry|record|工时记录|工时|记录)\s*#?\s*(\d+)",
+        text,
+        re.IGNORECASE,
+    )
+    if entry_match is None:
+        entry_match = re.search(r"#(\d+)", text)
+    if any(word in lowered for word in ("reject", "decline")) or any(
+        word in text for word in ("驳回", "拒绝")
+    ):
+        decision = "rejected"
+    elif any(word in lowered for word in ("approve", "accept")) or any(
+        word in text for word in ("批准", "通过")
+    ):
+        decision = "approved"
+    else:
+        decision = None
+    comment_match = re.search(
+        r"(?:comment|reason|备注|意见)(?:\s*(?:is|是|为|[:：]))?\s*(.+)$",
+        text,
+        re.IGNORECASE,
+    )
+    return (
+        int(entry_match.group(1)) if entry_match else None,
+        decision,
+        comment_match.group(1).strip() if comment_match else None,
+    )
+
+
+def _parse_comparison_steps(text: str, today: date) -> list[AnalysisStep]:
+    """Build safe offline comparison slices from explicit projects or weeks."""
+
+    lowered = text.casefold()
+    projects = [name for name in PROJECT_NAMES if name.casefold() in lowered]
+    pair = re.search(
+        r"\bcompare\s+([A-Za-z][\w-]*)\s+(?:and|vs\.?|versus)\s+([A-Za-z][\w-]*)",
+        text,
+        re.IGNORECASE,
+    )
+    if pair:
+        projects = [pair.group(1), pair.group(2)]
+    status = _entry_status(text, lowered)
+    if len(projects) >= 2:
+        start, end = _read_date_range(text, lowered, today, [])
+        return [
+            AnalysisStep(
+                label=name,
+                project_name=name,
+                entry_status=status,
+                start_date=start,
+                end_date=end,
+            )
+            for name in projects[:4]
+        ]
+    if len(projects) == 1 and (
+        ("this week" in lowered and "last week" in lowered)
+        or ("本周" in text and "上周" in text)
+    ):
+        this_start = today - timedelta(days=today.weekday())
+        return [
+            AnalysisStep(
+                label="Last week",
+                project_name=projects[0],
+                entry_status=status,
+                start_date=this_start - timedelta(days=7),
+                end_date=this_start - timedelta(days=1),
+            ),
+            AnalysisStep(
+                label="This week",
+                project_name=projects[0],
+                entry_status=status,
+                start_date=this_start,
+                end_date=today,
+            ),
+        ]
+    return []
+
+
+def _parse_analytics_spec(
+    text: str,
+    start_date: date | None,
+    end_date: date | None,
+    entry_status: str | None,
+) -> AnalyticsQuerySpec:
+    lowered = text.casefold()
+    if any(word in lowered for word in ("status", "状态")):
+        dimension = "status"
+    elif any(word in lowered for word in ("employee", "person", "员工", "人员")):
+        dimension = "employee"
+    elif any(word in lowered for word in ("month", "monthly", "月份", "月度")):
+        dimension = "month"
+    elif any(word in lowered for word in ("day", "date", "每日", "日期")):
+        dimension = "work_date"
+    else:
+        dimension = "project"
+    metric = (
+        "entry_count"
+        if any(
+            phrase in lowered
+            for phrase in ("entry count", "record count", "number of entries", "记录数", "条数")
+        )
+        else "hours"
+    )
+    return AnalyticsQuerySpec(
+        dimension=dimension,
+        metric=metric,
+        start_date=start_date,
+        end_date=end_date,
+        entry_status=entry_status,
+        project_name=_extract_project_name(text),
+    )
 
 
 def _read_date_range(
@@ -204,31 +331,148 @@ class LocalPlanner:
         )
         entry_status = _entry_status(text, lowered)
 
+        # The local planner is an offline fallback, so exact social phrases are
+        # handled here without pretending to provide open-ended model chat.
+        normalized = re.sub(r"[\s!！,.，。?？]+", "", lowered)
+        if normalized in {
+            "hello",
+            "hi",
+            "hey",
+            "你好",
+            "您好",
+            "嗨",
+            "谢谢",
+            "thanks",
+            "thankyou",
+            "再见",
+            "bye",
+        }:
+            return AgentPlan(intent="greeting")
+
+        if any(word in lowered for word in ("compare", "versus", " vs ")) or any(
+            word in text for word in ("对比", "比较")
+        ):
+            return AgentPlan(
+                intent="compare_analysis",
+                analysis_steps=_parse_comparison_steps(text, today),
+            )
+
+        analytics_request = any(
+            phrase in lowered
+            for phrase in (
+                "sql analysis",
+                "sql agent",
+                "analytics query",
+                "group hours by",
+                "安全分析",
+                "数据分析",
+                "按项目统计",
+                "按状态统计",
+            )
+        )
+        raw_sql_markers = re.search(
+            r"(?:;|--|\bselect\b|\bdrop\b|\binsert\b|\bupdate\b|\bdelete\b|\bpragma\b)",
+            lowered,
+        )
+        if analytics_request and raw_sql_markers is not None:
+            return AgentPlan(intent="safe_sql_analysis", analytics_query=None)
+        if analytics_request:
+            return AgentPlan(
+                intent="safe_sql_analysis",
+                analytics_query=_parse_analytics_spec(
+                    text, start_date, end_date, entry_status
+                ),
+            )
+
         if any(
-            word in lowered
-            for word in (
-                "draft",
-                "草稿",
-                "记录工时",
-                "补工时",
-                "填报",
-                "登记工时",
+            phrase in lowered
+            for phrase in (
+                "suggest time",
+                "recommend time",
+                "work suggestions",
+                "填报建议",
+                "工时建议",
+                "推荐填报",
+                "智能填报",
             )
         ):
-            hours_match = re.search(
-                r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|小时)", lowered
+            work_date = start_date if start_date == end_date else None
+            return AgentPlan(
+                intent="suggest_time_entries", work_date=work_date
             )
-            description_match = re.search(r"[:：]\s*(.+)$", text)
+
+        if ("batch" in lowered or "批量" in text) and any(
+            phrase in lowered
+            for phrase in (
+                "draft",
+                "log",
+                "record",
+                "填报",
+                "记录",
+                "登记",
+            )
+        ):
+            return AgentPlan(
+                intent="draft_time_entries_batch",
+                batch_entries=_parse_batch_entries(text, today),
+            )
+
+        hours_match = re.search(
+            r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|小时)", lowered
+        )
+        write_phrase = any(
+            phrase in lowered
+            for phrase in (
+                "draft",
+                "log time",
+                "record time",
+                "add time",
+                "草稿",
+                "补工时",
+                "填报",
+                "登记",
+            )
+        )
+        # Chinese "记录" may be a verb (create) or a noun (records). A stated
+        # duration distinguishes an explicit write from a history query.
+        write_phrase = write_phrase or (
+            "记录" in text and hours_match is not None
+        )
+        if write_phrase:
+            description_match = re.search(
+                r"(?:description|描述|备注)(?:\s*(?:is|是|为|[:：]))?\s*(.+)$",
+                text,
+                re.IGNORECASE,
+            )
+            if description_match is None:
+                description_match = re.search(r"[:：]\s*(.+)$", text)
+            work_date = dates[0] if dates else None
+            if work_date is None and start_date == end_date:
+                work_date = start_date
             return AgentPlan(
                 intent="draft_time_entry",
                 project_name=project_name,
-                work_date=dates[0] if dates else None,
-                hours=Decimal(hours_match.group(1)) if hours_match else None,
+                work_date=work_date,
+                hours=(
+                    Decimal(hours_match.group(1))
+                    if hours_match is not None
+                    else None
+                ),
                 description=(
                     description_match.group(1).strip()
                     if description_match
                     else None
                 ),
+            )
+
+        if (
+            any(phrase in lowered for phrase in ("weekly report", "week report"))
+            or "周报" in text
+        ):
+            return AgentPlan(
+                intent="weekly_report",
+                start_date=start_date,
+                end_date=end_date,
             )
 
         if (
@@ -265,6 +509,15 @@ class LocalPlanner:
             )
         ):
             return AgentPlan(intent="policy_question")
+
+        entry_id, decision, comment = _parse_approval_action(text)
+        if entry_id is not None and decision is not None:
+            return AgentPlan(
+                intent="decide_time_entry",
+                time_entry_id=entry_id,
+                approval_decision=decision,
+                approval_comment=comment,
+            )
 
         if any(word in lowered for word in ("approve", "approval", "审批", "批准")):
             return AgentPlan(intent="pending_team")
@@ -366,9 +619,31 @@ class LocalPlanner:
 
 
 class OpenAIPlanner:
-    def __init__(self, api_key: str, model: str) -> None:
-        self._client = AsyncOpenAI(api_key=api_key)
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        base_url: str | None = None,
+        *,
+        instructions: str,
+    ) -> None:
+        client_options = {"api_key": api_key}
+        if base_url:
+            client_options["base_url"] = base_url
+        self._client = AsyncOpenAI(
+            **client_options,
+            timeout=45.0,
+            max_retries=1,
+        )
         self._model = model
+        self._instructions = instructions
+        self._is_dashscope = bool(
+            base_url
+            and (
+                "dashscope." in base_url
+                or ".maas.aliyuncs.com" in base_url
+            )
+        )
 
     async def close(self) -> None:
         await self._client.close()
@@ -389,19 +664,110 @@ class OpenAIPlanner:
                 "\nAuthoritative fictional actor and short-session context:\n"
                 + json.dumps(context.model_dump(mode="json"), ensure_ascii=False)
             )
-        response = await self._client.responses.parse(
-            model=self._model,
-            instructions=PLANNER_INSTRUCTIONS,
-            input=(
+        request: dict[str, Any] = {
+            "model": self._model,
+            "instructions": self._instructions,
+            "input": (
                 f"Today is {today.isoformat()}.\nUser request: {message}"
                 f"{context_text}"
             ),
-            text_format=AgentPlan,
-            reasoning={"effort": "low"},
-            safety_identifier=safety_identifier,
-            store=False,
-            verbosity="low",
-        )
+            "text_format": AgentPlan,
+            "max_output_tokens": 1000,
+            "store": False,
+        }
+        if getattr(self, "_is_dashscope", False):
+            # DashScope enables thinking for some Qwen aliases. Structured
+            # output requires message format, so planning disables thinking.
+            request["extra_body"] = {"enable_thinking": False}
+        else:
+            request.update(
+                {
+                    "reasoning": {"effort": "low"},
+                    "safety_identifier": safety_identifier,
+                    "verbosity": "low",
+                }
+            )
+        try:
+            response = await self._client.responses.parse(**request)
+        except Exception as exc:
+            # Provider failures and malformed structured output must not turn
+            # an otherwise safe chat request into an internal server error.
+            validation_fields = ""
+            if isinstance(exc, ValidationError):
+                validation_fields = ",".join(
+                    ".".join(str(part) for part in error["loc"])
+                    + ":"
+                    + error["type"]
+                    for error in exc.errors(include_input=False)
+                )
+            logger.warning(
+                "llm_planning_failed error_type=%s fields=%s",
+                type(exc).__name__,
+                validation_fields or "none",
+            )
+            return await LocalPlanner().plan(message, today, actor_id, context)
         if response.output_parsed is None:
             return resolve_plan_context(AgentPlan(intent="unknown"), context)
-        return resolve_plan_context(response.output_parsed, context)
+        parsed_plan = response.output_parsed
+        # Analytics has a deterministic same-message safety parser. Give it
+        # precedence over the provider-selected intent so model variance can
+        # never turn an explicit safe-analysis or raw-SQL-shaped request into
+        # a different tool plan.
+        local_guard_plan = await LocalPlanner().plan(
+            message, today, actor_id, context
+        )
+        if local_guard_plan.intent == "safe_sql_analysis":
+            parsed_plan = local_guard_plan
+        elif parsed_plan.intent == "safe_sql_analysis":
+            # A provider-only analytics classification is not enough to
+            # authorize a query specification. Unsupported wording therefore
+            # reaches the safe refusal path with no executable specification.
+            parsed_plan = parsed_plan.model_copy(update={"analytics_query": None})
+        elif parsed_plan.intent == "draft_time_entry":
+            # For writes, exact values visible in the current message outrank
+            # model omissions. This resolver only fills fields parsed from the
+            # same request; it never inherits write values from conversation.
+            local_plan = local_guard_plan
+            if local_plan.intent == "draft_time_entry":
+                parsed_plan = parsed_plan.model_copy(
+                    update={
+                        field: value
+                        for field in (
+                            "project_name",
+                            "work_date",
+                            "hours",
+                            "description",
+                        )
+                        if (value := getattr(local_plan, field)) is not None
+                    }
+                )
+        elif parsed_plan.intent == "draft_time_entries_batch":
+            local_plan = local_guard_plan
+            if (
+                local_plan.intent == "draft_time_entries_batch"
+                and local_plan.batch_entries
+            ):
+                parsed_plan = parsed_plan.model_copy(
+                    update={"batch_entries": local_plan.batch_entries}
+                )
+        elif parsed_plan.intent == "decide_time_entry":
+            # Approval authorization must be based on an exact ID and decision
+            # present in this message, never on a model guess or prior turn.
+            entry_id, decision, comment = _parse_approval_action(message)
+            parsed_plan = parsed_plan.model_copy(
+                update={
+                    "time_entry_id": entry_id,
+                    "approval_decision": decision,
+                    "approval_comment": comment,
+                }
+            )
+        elif parsed_plan.intent == "compare_analysis":
+            # Deterministically parsed slices from this message override model
+            # renderings when available; all other slices still face server
+            # validation before any tool executes.
+            local_steps = _parse_comparison_steps(message, today)
+            if local_steps:
+                parsed_plan = parsed_plan.model_copy(
+                    update={"analysis_steps": local_steps}
+                )
+        return resolve_plan_context(parsed_plan, context)

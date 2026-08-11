@@ -6,13 +6,27 @@ demo. It provides:
 - employee, manager, and admin demo-persona switching;
 - chat prompt shortcuts and a free-form composer;
 - visible tool-event cards;
+- live planning, authorized-tool, and answer-composition status over SSE;
 - role-scoped monthly-hours charts;
-- a dry-run review card with a separate explicit confirmation button.
+- personal time-entry suggestion cards;
+- single and batch dry-run review cards with a separate explicit confirmation
+  button;
+- distinct approval/rejection review cards for authorized managers and admins;
+- weekly report summaries with a role-scoped CSV download;
+- comparison tables showing per-slice hours and deltas from the first slice;
+- privacy controls for bounded history, language/project preferences, and
+  two-step private-state deletion;
+- safe analytics tables that expose the validated specification, never SQL text;
 - actor-specific short conversation sessions for safe follow-up questions.
 
 The browser calls local Next.js route handlers. Those handlers forward only a
 known demo actor ID to the FastAPI services; the Core API remains the
 authorization boundary.
+
+The streaming route proxies FastAPI's response body without buffering. The UI
+shows only safe stage and tool-name metadata while work is running, then renders
+the unchanged structured response used by charts, citations, and confirmation
+cards.
 
 ## Run with the full stack
 
@@ -51,3 +65,8 @@ Recommended manual scenarios:
    ask about pending approvals.
 5. As Jamie, request an exact time-entry draft. Check that the preview says
    `DRY RUN`, then either dismiss it or explicitly confirm it.
+6. Ask for today's time-entry suggestions and verify no confirmation card is
+   created. Then request two explicit batch entries and verify one review card
+   lists both entries before confirmation.
+7. As Morgan, inspect pending entries, then request approval for one exact ID.
+   Verify the decision remains unchanged until `Confirm decision` is clicked.

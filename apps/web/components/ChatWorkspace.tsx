@@ -3,13 +3,37 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { DEMO_PROMPTS, PERSONAS } from "@/lib/personas";
 import type {
+  AgentProgressEvent,
   ChartData,
   ChatResponse,
+  ComparisonData,
   Confirmation,
   ConversationItem,
   PolicyCitation,
+  SafeAnalyticsData,
+  TimeEntrySuggestionData,
   ToolEvent,
+  WeeklyReportData,
 } from "@/lib/types";
+
+function AgentProgress({ events }: { events: AgentProgressEvent[] }) {
+  return (
+    <section className="agent-progress" aria-label="Agent progress">
+      <span className="section-label">LIVE AGENT STATUS</span>
+      {events.map((event, index) => (
+        <div className="progress-row" key={`${event.kind}-${event.stage ?? event.name}-${index}`}>
+          <span className={`progress-dot ${event.status ?? "active"}`} />
+          <strong>
+            {event.kind === "tool"
+              ? event.name?.replaceAll("_", " ")
+              : event.message}
+          </strong>
+          <small>{event.intent ?? event.status ?? event.stage}</small>
+        </div>
+      ))}
+    </section>
+  );
+}
 
 function isChartData(data: unknown): data is ChartData {
   return (
@@ -19,6 +43,91 @@ function isChartData(data: unknown): data is ChartData {
     data.type === "bar" &&
     "rows" in data &&
     Array.isArray(data.rows)
+  );
+}
+
+function isSuggestionData(data: unknown): data is TimeEntrySuggestionData {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "type" in data &&
+    data.type === "time_entry_suggestions" &&
+    "suggestions" in data &&
+    Array.isArray(data.suggestions)
+  );
+}
+
+function isWeeklyReportData(data: unknown): data is WeeklyReportData {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "type" in data &&
+    data.type === "weekly_report"
+  );
+}
+
+function isComparisonData(data: unknown): data is ComparisonData {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "type" in data &&
+    data.type === "comparison" &&
+    "rows" in data &&
+    Array.isArray(data.rows)
+  );
+}
+
+function isSafeAnalyticsData(data: unknown): data is SafeAnalyticsData {
+  return (
+    typeof data === "object" && data !== null && "type" in data &&
+    data.type === "safe_sql_analysis" && "rows" in data && Array.isArray(data.rows)
+  );
+}
+
+function SafeAnalyticsTable({ data }: { data: SafeAnalyticsData }) {
+  return (
+    <section className="comparison-table" aria-label="Safe analytics result">
+      <span className="section-label">SAFE READ MODEL · NO RAW SQL</span>
+      <table><thead><tr><th>{data.dimension}</th><th>{data.metric}</th></tr></thead>
+        <tbody>{data.rows.map((row) => <tr key={row.dimension}><td>{row.dimension}</td><td>{row.value}</td></tr>)}</tbody>
+      </table>
+      <details><summary>Validated query specification</summary><pre className="preview-json">{JSON.stringify(data.query_spec, null, 2)}</pre></details>
+    </section>
+  );
+}
+
+function ComparisonTable({ data }: { data: ComparisonData }) {
+  return (
+    <section className="comparison-table" aria-label="Comparison analysis">
+      <span className="section-label">BASELINE · {data.baseline}</span>
+      <table>
+        <thead><tr><th>Slice</th><th>Range</th><th>Entries</th><th>Hours</th><th>Δ</th></tr></thead>
+        <tbody>
+          {data.rows.map((row) => (
+            <tr key={row.label}>
+              <td><strong>{row.label}</strong><small>{row.project_name}</small></td>
+              <td>{row.start_date ? `${row.start_date} → ${row.end_date}` : "All visible dates"}</td>
+              <td>{row.entry_count}</td><td>{row.hours}</td><td>{row.delta_from_first}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function WeeklyReport({ data, actorId }: { data: WeeklyReportData; actorId: number }) {
+  const download = `/api/reports/weekly.csv?actorId=${actorId}&week_start=${encodeURIComponent(data.week_start)}`;
+  return (
+    <section className="weekly-report" aria-label="Weekly report">
+      <div>
+        <span className="eyebrow">WEEKLY REPORT</span>
+        <strong>{data.week_start} → {data.week_end}</strong>
+      </div>
+      <div><b>{data.total_hours}</b><span>hours</span></div>
+      <div><b>{data.entry_count}</b><span>entries</span></div>
+      <a href={download}>Download role-scoped CSV</a>
+    </section>
   );
 }
 
@@ -106,7 +215,38 @@ function CitationList({ citations }: { citations: PolicyCitation[] }) {
   );
 }
 
+function SuggestionList({ data }: { data: TimeEntrySuggestionData }) {
+  return (
+    <section className="suggestion-list" aria-label="Time entry suggestions">
+      <div className="suggestion-heading">
+        <span className="section-label">RECENT-WORK SUGGESTIONS</span>
+        <span className="suggestion-badge">REVIEW BEFORE DRAFTING</span>
+      </div>
+      {data.suggestions.length === 0 ? (
+        <p>No personal recent work is available for suggestions.</p>
+      ) : (
+        data.suggestions.map((suggestion) => (
+          <article className="suggestion-card" key={suggestion.project_id}>
+            <div>
+              <strong>{suggestion.project_name}</strong>
+              <span>{suggestion.target_date}</span>
+            </div>
+            <p>{suggestion.suggested_description}</p>
+            <small>
+              {suggestion.suggested_hours} hours · based on your entry from{" "}
+              {suggestion.based_on_date}
+            </small>
+          </article>
+        ))
+      )}
+    </section>
+  );
+}
+
 function PreviewValue({ value }: { value: unknown }) {
+  if (typeof value === "object" && value !== null) {
+    return <pre className="preview-json">{JSON.stringify(value, null, 2)}</pre>;
+  }
   return <span>{value === null || value === undefined ? "—" : String(value)}</span>;
 }
 
@@ -142,11 +282,19 @@ function ConfirmationCard({
       return;
     }
     setState("done");
-    onResolved("Confirmed. The time entry was created and audited.");
+    const count = Number(payload?.result?.count ?? 1);
+    const decidedStatus = payload?.result?.time_entry?.status;
+    onResolved(
+      confirmation.action === "create_time_entries"
+        ? `Confirmed. ${count} time entries were created atomically and audited.`
+        : confirmation.action === "decide_time_entry"
+          ? `Confirmed. The time entry was ${decidedStatus ?? "decided"} and the approval was audited.`
+          : "Confirmed. The time entry was created and audited.",
+    );
   }
 
   if (state === "cancelled") {
-    return <div className="resolution-note">Draft dismissed. No write was made.</div>;
+    return <div className="resolution-note">Proposal dismissed. No write was made.</div>;
   }
 
   return (
@@ -155,7 +303,13 @@ function ConfirmationCard({
         <div className="shield">✓</div>
         <div>
           <span className="eyebrow">EXPLICIT CONFIRMATION REQUIRED</span>
-          <h3>Review time entry draft</h3>
+          <h3>
+            {confirmation.action === "create_time_entries"
+              ? "Review batch time entry draft"
+              : confirmation.action === "decide_time_entry"
+                ? "Review approval decision"
+                : "Review time entry draft"}
+          </h3>
         </div>
         <span className="dry-run-badge">DRY RUN</span>
       </div>
@@ -191,7 +345,9 @@ function ConfirmationCard({
             ? "Confirming…"
             : state === "done"
               ? "Confirmed"
-              : "Confirm & create"}
+              : confirmation.action === "decide_time_entry"
+                ? "Confirm decision"
+                : "Confirm & create"}
         </button>
       </div>
     </section>
@@ -213,7 +369,7 @@ function AssistantResponse({
         <div className="response-meta">
           <strong>Acme Copilot</strong>
           <span>
-            {response.mode} planner
+            {response.mode === "openai" ? "LLM agent" : "local fallback"}
             {response.context
               ? ` · ${response.context.turn_count} turn context`
               : ""}
@@ -224,6 +380,14 @@ function AssistantResponse({
           <CitationList citations={response.citations} />
         )}
         {isChartData(response.data) && <HoursChart chart={response.data} />}
+        {isSuggestionData(response.data) && (
+          <SuggestionList data={response.data} />
+        )}
+        {isWeeklyReportData(response.data) && (
+          <WeeklyReport actorId={actorId} data={response.data} />
+        )}
+        {isComparisonData(response.data) && <ComparisonTable data={response.data} />}
+        {isSafeAnalyticsData(response.data) && <SafeAnalyticsTable data={response.data} />}
         {response.tool_events.length > 0 && (
           <div className="tools">
             <span className="section-label">
@@ -245,6 +409,91 @@ function AssistantResponse({
         {resolution && <div className="resolution-note">{resolution}</div>}
       </div>
     </div>
+  );
+}
+
+type PreferenceState = {
+  actor_id: number;
+  history_enabled: boolean;
+  preferred_language: "auto" | "en" | "zh";
+  preferred_project_id: number | null;
+};
+
+type PreferencePreview = {
+  action: string;
+  preview: Record<string, unknown>;
+  confirmation_token: string;
+};
+
+function PrivacyControls({ actorId }: { actorId: number }) {
+  const [current, setCurrent] = useState<PreferenceState | null>(null);
+  const [historyEnabled, setHistoryEnabled] = useState(true);
+  const [language, setLanguage] = useState<"auto" | "en" | "zh">("auto");
+  const [preferredProject, setPreferredProject] = useState("");
+  const [preview, setPreview] = useState<PreferencePreview | null>(null);
+  const [notice, setNotice] = useState("");
+
+  async function load() {
+    const response = await fetch(`/api/preferences?actorId=${actorId}`, { cache: "no-store" });
+    const payload = (await response.json()) as PreferenceState;
+    if (!response.ok) return;
+    setCurrent(payload); setHistoryEnabled(payload.history_enabled);
+    setLanguage(payload.preferred_language);
+    setPreferredProject(payload.preferred_project_id?.toString() ?? "");
+    setPreview(null); setNotice("");
+  }
+
+  async function prepareUpdate() {
+    const response = await fetch("/api/preferences", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        actorId,
+        history_enabled: historyEnabled,
+        preferred_language: language,
+        preferred_project_id: preferredProject ? Number(preferredProject) : undefined,
+        clear_preferred_project: !preferredProject,
+      }),
+    });
+    if (response.ok) setPreview((await response.json()) as PreferencePreview);
+  }
+
+  async function prepareDeletion() {
+    const response = await fetch("/api/preferences/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actorId }),
+    });
+    if (response.ok) setPreview((await response.json()) as PreferencePreview);
+  }
+
+  async function confirm() {
+    if (!preview) return;
+    const response = await fetch(
+      `/api/preferences/actions/${preview.confirmation_token}/confirm`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorId, confirm: true }) },
+    );
+    if (response.ok) {
+      const completedNotice = preview.action === "delete_private_state" ? "Private state deleted." : "Preferences saved.";
+      setPreview(null); await load(); setNotice(completedNotice);
+    }
+  }
+
+  return (
+    <details className="privacy-controls">
+      <summary>Privacy & memory</summary>
+      {!current ? (
+        <button type="button" onClick={() => void load()}>Load my settings</button>
+      ) : (
+        <>
+          <label><input checked={historyEnabled} onChange={(event) => setHistoryEnabled(event.target.checked)} type="checkbox" /> Persist bounded chat history</label>
+          <label>Reply preference<select value={language} onChange={(event) => setLanguage(event.target.value as "auto" | "en" | "zh")}><option value="auto">Match request</option><option value="en">English</option><option value="zh">中文</option></select></label>
+          <label>Preferred visible project ID<input min="1" onChange={(event) => setPreferredProject(event.target.value)} placeholder="Optional" type="number" value={preferredProject} /></label>
+          <button type="button" onClick={() => void prepareUpdate()}>Preview changes</button>
+          <button className="danger-link" type="button" onClick={() => void prepareDeletion()}>Preview private-state deletion</button>
+        </>
+      )}
+      {preview && <div className="privacy-preview"><strong>DRY RUN · {preview.action.replaceAll("_", " ")}</strong><pre>{JSON.stringify(preview.preview, null, 2)}</pre><button type="button" onClick={() => void confirm()}>Explicitly confirm</button><button type="button" onClick={() => setPreview(null)}>Dismiss</button></div>}
+      {notice && <p>{notice}</p>}
+    </details>
   );
 }
 
@@ -279,7 +528,7 @@ export function ChatWorkspace() {
     setInput("");
     setBusy(true);
     try {
-      const response = await fetch("/api/chat", {
+      const response = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -288,21 +537,82 @@ export function ChatWorkspace() {
           sessionId: sessionsRef.current[requestActor],
         }),
       });
-      const payload = (await response.json()) as ChatResponse & {
-        detail?: string;
-      };
-      if (response.ok && payload.session_id) {
-        sessionsRef.current[requestActor] = payload.session_id;
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!response.ok || !contentType.includes("text/event-stream")) {
+        const payload = (await response.json()) as ChatResponse & {
+          detail?: string;
+        };
+        if (response.ok && payload.session_id) {
+          sessionsRef.current[requestActor] = payload.session_id;
+        }
+        setConversation((items) =>
+          items.map((item) =>
+            item.id === id
+              ? response.ok
+                ? { ...item, response: payload }
+                : { ...item, error: payload.detail ?? "Request failed." }
+              : item,
+          ),
+        );
+        return;
       }
-      setConversation((items) =>
-        items.map((item) =>
-          item.id === id
-            ? response.ok
-              ? { ...item, response: payload }
-              : { ...item, error: payload.detail ?? "Request failed." }
-            : item,
-        ),
-      );
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("Streaming response has no body");
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalPayload: ChatResponse | null = null;
+
+      function consumeBlock(block: string) {
+        const eventName = block
+          .split("\n")
+          .find((line) => line.startsWith("event: "))
+          ?.slice(7);
+        const data = block
+          .split("\n")
+          .filter((line) => line.startsWith("data: "))
+          .map((line) => line.slice(6))
+          .join("\n");
+        if (!eventName || !data) return;
+        const payload = JSON.parse(data) as Record<string, unknown>;
+        if (eventName === "status" || eventName === "tool") {
+          const progress = {
+            kind: eventName,
+            ...payload,
+          } as AgentProgressEvent;
+          setConversation((items) =>
+            items.map((item) =>
+              item.id === id
+                ? { ...item, progress: [...(item.progress ?? []), progress] }
+                : item,
+            ),
+          );
+        }
+        if (eventName === "result") {
+          finalPayload = payload as ChatResponse;
+          if (finalPayload.session_id) {
+            sessionsRef.current[requestActor] = finalPayload.session_id;
+          }
+          setConversation((items) =>
+            items.map((item) =>
+              item.id === id ? { ...item, response: finalPayload ?? undefined } : item,
+            ),
+          );
+        }
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done }).replaceAll("\r\n", "\n");
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary >= 0) {
+          consumeBlock(buffer.slice(0, boundary));
+          buffer = buffer.slice(boundary + 2);
+          boundary = buffer.indexOf("\n\n");
+        }
+        if (done) break;
+      }
+      if (!finalPayload) throw new Error("Stream ended without a result");
     } catch {
       setConversation((items) =>
         items.map((item) =>
@@ -369,6 +679,7 @@ export function ChatWorkspace() {
             and a separate confirmation.
           </p>
         </div>
+        <PrivacyControls actorId={actorId} key={actorId} />
       </aside>
 
       <section className="workspace">
@@ -424,12 +735,16 @@ export function ChatWorkspace() {
               )}
               {item.error && <div className="error-card">{item.error}</div>}
               {!item.response && !item.error && (
-                <div className="thinking">
-                  <span />
-                  <span />
-                  <span />
-                  Checking authorized data
-                </div>
+                item.progress && item.progress.length > 0 ? (
+                  <AgentProgress events={item.progress} />
+                ) : (
+                  <div className="thinking">
+                    <span />
+                    <span />
+                    <span />
+                    Connecting to authorized agent
+                  </div>
+                )
               )}
             </article>
           ))}

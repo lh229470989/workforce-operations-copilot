@@ -1,5 +1,9 @@
 # Target Architecture
 
+For a guided Chinese explanation of the implemented system, start with the
+[architecture documentation index](README.md). This file remains the compact
+boundary specification.
+
 ## Components
 
 | Component | Responsibility | Public-demo constraint |
@@ -20,13 +24,32 @@ role from SQLite and applies record-level authorization.
 
 1. **Authoritative actor context** is refreshed from Core API for every chat:
    role, visible departments/projects, and recent fictional time entries.
-2. **Short conversation context** is process-local, actor-bound, capped at 10
+2. **Short conversation context** is SQLite-backed, actor-bound, capped at 10
    turns, and expires after 30 minutes by default.
-3. **Long-term memory** is intentionally not implemented. Adding cross-session
-   retention requires an explicit retention, deletion, and privacy design.
+3. **Persistent preferences** are limited to history enablement, response
+   language, and a currently visible preferred project. Updates and deletion
+   use dry-run plus explicit confirmation.
 
 Conversation context may fill omitted filters for read-only follow-ups. It
-never fills missing fields for a draft or confirmation.
+never fills missing fields for a single/batch draft, approval decision, or
+confirmation.
+
+## LLM orchestration boundary
+
+The primary configured path uses an LLM twice: schema-constrained intent
+planning before tool execution, then natural-language composition after the
+server has returned an authorized result. The model never executes arbitrary
+code or talks directly to SQLite or the Core API.
+
+```text
+message -> LLM plan -> server validation -> allowlisted tool
+        -> authorized result -> LLM answer -> structured web response
+```
+
+When no model credential is configured, the service uses a clearly labeled
+local fallback. That path exists for offline availability and regression tests;
+it is not presented as equivalent to the LLM agent. Model composition receives
+synthetic result data but never receives a confirmation token.
 
 The planner declares a structured `conversation_relation` and an explicit
 `inherit_fields` list. A deterministic resolver applies a server-owned
@@ -38,18 +61,26 @@ follow-up keyword list.
 ## Grounded policy retrieval
 
 Policy Markdown is split by authored section and indexed in process with
-English tokens, Chinese aliases, and character bigrams. Retrieval applies
-normalized IDF overlap, heading boosts, and a minimum evidence score.
+English normalization, Chinese aliases, and character trigrams. Hybrid
+retrieval applies IDF overlap, heading boosts, fuzzy similarity, complementary
+section reranking, a minimum evidence score, and concept coverage.
 
 ```text
-policy question → retrieve sections → evidence threshold
-                                      ├─ met → extractive answer + citations
-                                      └─ unmet → explicit grounded refusal
+policy question → hybrid candidates → coverage rerank → score + coverage gate
+                                                       ├─ met → extractive answer + citations
+                                                       └─ unmet → explicit grounded refusal
 ```
 
 The response exposes source ID, title, section, repository path, and a short
 supporting excerpt. Policy retrieval never grants workforce-data access and
 does not participate in write execution.
+
+## Safe analytics compiler
+
+The model may select an allowlisted analytics dimension, metric, and filters;
+it cannot provide SQL. Core API adds actor row scope and compiles one
+parameterized aggregate query under SQLite query-only mode. See
+[advanced RAG and safe SQL](advanced-rag-and-safe-sql.md).
 
 ## Observability boundary
 
@@ -61,7 +92,15 @@ records. Metrics are process-local and reset when the container restarts.
 ## Write-operation flow
 
 ```text
-User request → AI proposes action → dry-run preview → user confirmation → demo API write → audit event
+User request → AI proposes single/batch action → dry-run preview → user confirmation → atomic demo API write → audit event
 ```
+
+Personal suggestions are a separate read path. They are derived from the
+actor's own recent synthetic entries and active memberships, never create a
+confirmation token, and are not treated as authorization to write.
+
+Approval proposals name one exact time entry and one explicit decision. The
+Core API validates manager/admin scope and submitted state at dry-run time and
+again after the user separately confirms the actor-bound token.
 
 The AI API must enforce role-aware filtering server-side. The browser is never the authorization boundary.

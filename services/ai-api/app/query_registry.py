@@ -22,6 +22,7 @@ READ_INTENTS = frozenset(
         "hours_by_project",
         "summary",
         "monthly_chart",
+        "weekly_report",
         "pending_team",
     }
 )
@@ -98,6 +99,27 @@ class ReadQueryRegistry:
             message=f"Your visible departments are: {names}.",
             tool_events=[tool_event("list_departments", {}, departments)],
             data=departments,
+        )
+
+    async def _handle_weekly_report(
+        self, plan: AgentPlan, actor_id: int
+    ) -> ExecutionResult:
+        report = await self.core.get_weekly_report(actor_id, plan.start_date)
+        data = {"type": "weekly_report", **report}
+        return ExecutionResult(
+            message=(
+                f"Weekly report for {report['week_start']} through "
+                f"{report['week_end']}: {report['total_hours']} hours across "
+                f"{report['entry_count']} entries. A role-scoped CSV is ready."
+            ),
+            tool_events=[
+                tool_event(
+                    "get_weekly_report",
+                    {"week_start": report["week_start"]},
+                    report,
+                )
+            ],
+            data=data,
         )
 
     async def _handle_list_employees(
@@ -330,9 +352,10 @@ class ReadQueryRegistry:
             )
         else:
             message = (
-                f"You can approve eligible direct-report entries in Core API, and "
-                f"{len(entries)} submitted entries are visible. This milestone is "
-                "read-only for approvals, so no approval action was performed."
+                f"You can decide eligible direct-report entries, and {len(entries)} "
+                "submitted entries are visible. This request only inspected the "
+                "queue; provide an exact entry ID and approve/reject decision to "
+                "create a dry-run proposal."
             )
         return ExecutionResult(
             message=message,

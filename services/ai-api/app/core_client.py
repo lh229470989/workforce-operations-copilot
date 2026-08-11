@@ -61,12 +61,75 @@ class CoreAPIClient:
     async def get_summary(self, actor_id: int) -> dict[str, Any]:
         return await self._request("GET", "/stats/summary", actor_id=actor_id)
 
+    async def get_weekly_report(
+        self, actor_id: int, week_start: Any = None
+    ) -> dict[str, Any]:
+        params = {}
+        if week_start is not None:
+            params["week_start"] = (
+                week_start.isoformat()
+                if hasattr(week_start, "isoformat")
+                else week_start
+            )
+        return await self._request(
+            "GET", "/reports/weekly", actor_id=actor_id, params=params
+        )
+
+    async def run_safe_analytics(
+        self, actor_id: int, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST", "/analytics/query", actor_id=actor_id, json=payload
+        )
+
+    async def get_time_entry_suggestions(
+        self, actor_id: int, target_date: Any = None
+    ) -> list[dict[str, Any]]:
+        params = {}
+        if target_date is not None:
+            params["target_date"] = (
+                target_date.isoformat()
+                if hasattr(target_date, "isoformat")
+                else target_date
+            )
+        return await self._request(
+            "GET",
+            "/time-entry-suggestions",
+            actor_id=actor_id,
+            params=params,
+        )
+
     async def dry_run_time_entry(
         self, actor_id: int, payload: dict[str, Any]
     ) -> dict[str, Any]:
         return await self._request(
             "POST",
             "/time-entries/dry-run",
+            actor_id=actor_id,
+            json=payload,
+        )
+
+    async def dry_run_time_entry_batch(
+        self, actor_id: int, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/time-entries/batch/dry-run",
+            actor_id=actor_id,
+            json=payload,
+        )
+
+    async def dry_run_approval(
+        self,
+        actor_id: int,
+        time_entry_id: int,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Request a proposal only; confirmation remains outside the agent."""
+
+        return await self._request(
+            "POST",
+            f"/time-entries/{time_entry_id}/approval/dry-run",
             actor_id=actor_id,
             json=payload,
         )

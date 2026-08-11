@@ -16,8 +16,9 @@ public issue containing exploit details.
 - AI API may plan an operation but cannot bypass Core API authorization.
 - Every data-changing operation requires a server-created dry-run token and a
   separate explicit confirmation request.
-- Conversation sessions are actor-bound, bounded, expiring, and process-local.
-- Policy answers require repository evidence and return citations.
+- Conversation sessions are actor-bound, bounded, expiring, and stored in a
+  dedicated local state database with user-controlled deletion.
+- Policy answers require repository evidence, coverage thresholds, and citations.
 
 ## Primary threats and controls
 
@@ -29,6 +30,8 @@ public issue containing exploit details.
 | Stale role or project context | Authoritative actor context refreshed per request |
 | Unsafe contextual write completion | Read-field inheritance allowlist |
 | Policy hallucination | Retrieval threshold, extractive answer, citations, refusal |
+| Model-generated SQL or data exfiltration | No SQL-text field; allowlisted analytics spec, actor scope, parameterized compiler, query-only connection |
+| Persistent-context overreach | Minimal preferences, fresh authorization, TTL, history opt-out, two-step deletion |
 | Secret publication | Ignore rules, local publication scan, CI scan |
 | Sensitive telemetry | Metadata-only logs and low-cardinality metrics |
 | Browser injection or framing | CSP, no-sniff, no-referrer, and frame denial headers |
@@ -42,4 +45,5 @@ public issue containing exploit details.
 - The static Next.js build permits its framework bootstrap inline script.
   Moving to nonce-based CSP requires dynamic request-time rendering.
 - Dependency audit results can change after publication and must be rerun.
-- Long-term user memory is intentionally absent.
+- SQLite state is a single-node demo store, not encrypted enterprise memory or
+  a multi-region retention system.

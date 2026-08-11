@@ -16,9 +16,14 @@ material into the demo.
 
 ## Retention
 
-Conversation context is short-lived and process-local. It expires after the
-configured session period and is cleared when the AI API process restarts.
-The demo does not provide cross-session personal memory.
+Conversation context is actor-bound, capped, and expires after the configured
+session period. It is stored in the demo's dedicated local SQLite state volume
+so an ordinary process restart does not silently erase an active session.
+
+Users may disable history retention. They may also inspect their minimal
+language and preferred-project settings, preview deletion of all private demo
+state, and explicitly confirm that deletion. Preferences never change access
+rights or write-confirmation requirements.
 
 ## Exports and screenshots
 

@@ -1,13 +1,18 @@
 import json
 import os
+import csv
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from io import StringIO
+from time import monotonic
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from sqlalchemy import case, func, select, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from .auth import ActorDep, SessionDep, require_visible_employee, visible_employee_ids
@@ -34,18 +39,27 @@ from .schemas import (
     ProjectHoursStat,
     ProjectMemberOut,
     ProjectOut,
+    SafeAnalyticsQuery,
     SummaryStat,
+    TimeEntryBatchDraftRequest,
     TimeEntryDraftRequest,
     TimeEntryOut,
+    TimeEntrySuggestionOut,
 )
 from .seed import seed_demo_data
 
 DEFAULT_DATABASE_URL = "sqlite:///./data/demo.db"
 ACTION_TTL_MINUTES = 15
+ANALYTICS_TIMEOUT_SECONDS = 1.0
+BUSINESS_TIMEZONE = os.getenv("BUSINESS_TIMEZONE", "Asia/Shanghai")
 
 
 def _utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _business_today() -> date:
+    return datetime.now(ZoneInfo(BUSINESS_TIMEZONE)).date()
 
 
 def _scoped_entry_query(session: Session, actor: Employee):
@@ -73,6 +87,85 @@ def _pending_action(
     return action
 
 
+def _prepare_time_entry_preview(
+    session: Session,
+    actor: Employee,
+    body: TimeEntryDraftRequest,
+) -> tuple[dict, dict]:
+    """Validate one proposed entry and return its payload and display preview."""
+
+    employee_id = body.employee_id or actor.id
+    if actor.role != "admin" and employee_id != actor.id:
+        raise HTTPException(
+            status_code=403, detail="Only admins may draft for another employee"
+        )
+    employee = session.get(Employee, employee_id)
+    project = session.get(Project, body.project_id)
+    if employee is None or project is None:
+        raise HTTPException(status_code=404, detail="Employee or project not found")
+    membership = session.scalar(
+        select(ProjectMember).where(
+            ProjectMember.employee_id == employee_id,
+            ProjectMember.project_id == body.project_id,
+        )
+    )
+    if membership is None:
+        raise HTTPException(
+            status_code=422, detail="Employee is not a member of this project"
+        )
+    payload = body.model_dump(mode="json")
+    payload["employee_id"] = employee_id
+    preview = {
+        **payload,
+        "employee_name": employee.name,
+        "project_name": project.name,
+        "status": "draft",
+    }
+    return payload, preview
+
+
+def _weekly_report_data(
+    session: Session, actor: Employee, week_start: date | None
+) -> dict:
+    """Build one role-scoped weekly report used by JSON and CSV endpoints."""
+
+    today = _business_today()
+    start = week_start or (today - timedelta(days=today.weekday()))
+    end = start + timedelta(days=6)
+    entries = list(
+        session.scalars(
+            _scoped_entry_query(session, actor)
+            .where(TimeEntry.work_date.between(start, end))
+            .order_by(TimeEntry.work_date, TimeEntry.id)
+        )
+    )
+    rows = [
+        {
+            "entry_id": entry.id,
+            "employee_id": entry.employee_id,
+            "employee_name": entry.employee.name,
+            "project_id": entry.project_id,
+            "project_name": entry.project.name,
+            "work_date": entry.work_date.isoformat(),
+            "hours": str(entry.hours),
+            "status": entry.status,
+            "description": entry.description,
+        }
+        for entry in entries
+    ]
+    by_status = {value: Decimal("0") for value in ("draft", "submitted", "approved", "rejected")}
+    for entry in entries:
+        by_status[entry.status] += entry.hours
+    return {
+        "week_start": start.isoformat(),
+        "week_end": end.isoformat(),
+        "total_hours": str(sum((entry.hours for entry in entries), Decimal("0"))),
+        "hours_by_status": {key: str(value) for key, value in by_status.items()},
+        "entry_count": len(rows),
+        "entries": rows,
+    }
+
+
 def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
     resolved_url = database_url or os.getenv("DEMO_DATABASE_URL", DEFAULT_DATABASE_URL)
     if resolved_url.startswith("sqlite:///") and ":memory:" not in resolved_url:
@@ -87,7 +180,7 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
         Base.metadata.create_all(engine)
         if seed:
             with session_factory() as session:
-                seed_demo_data(session)
+                seed_demo_data(session, today=_business_today())
         yield
         engine.dispose()
 
@@ -243,6 +336,125 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
             )
         )
 
+    @app.get("/reports/weekly", tags=["reports"])
+    def weekly_report(
+        session: SessionDep,
+        actor: ActorDep,
+        week_start: date | None = None,
+    ) -> dict:
+        return _weekly_report_data(session, actor, week_start)
+
+    @app.get("/reports/weekly.csv", tags=["reports"])
+    def weekly_report_csv(
+        session: SessionDep,
+        actor: ActorDep,
+        week_start: date | None = None,
+    ) -> Response:
+        report = _weekly_report_data(session, actor, week_start)
+        output = StringIO()
+        fieldnames = [
+            "entry_id",
+            "employee_id",
+            "employee_name",
+            "project_id",
+            "project_name",
+            "work_date",
+            "hours",
+            "status",
+            "description",
+        ]
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(report["entries"])
+        filename = f"acmeworks-week-{report['week_start']}.csv"
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.post("/analytics/query", tags=["analytics"])
+    def safe_analytics_query(
+        body: SafeAnalyticsQuery,
+        session: SessionDep,
+        actor: ActorDep,
+    ) -> dict:
+        """Compile a bounded specification into one parameterized read query."""
+
+        if body.start_date and body.end_date and body.start_date > body.end_date:
+            raise HTTPException(422, "start_date must not be after end_date")
+        dimensions = {
+            "project": Project.name,
+            "status": TimeEntry.status,
+            "employee": Employee.name,
+            "work_date": TimeEntry.work_date,
+            "month": func.strftime("%Y-%m", TimeEntry.work_date),
+        }
+        dimension = dimensions[body.dimension].label("dimension")
+        metric = (
+            func.coalesce(func.sum(TimeEntry.hours), 0)
+            if body.metric == "hours"
+            else func.count(TimeEntry.id)
+        ).label("value")
+        query = (
+            select(dimension, metric)
+            .select_from(TimeEntry)
+            .where(
+                TimeEntry.employee_id.in_(visible_employee_ids(session, actor))
+            )
+        )
+        if body.dimension == "project":
+            query = query.join(Project, TimeEntry.project_id == Project.id)
+        elif body.dimension == "employee":
+            query = query.join(Employee, TimeEntry.employee_id == Employee.id)
+        if body.start_date:
+            query = query.where(TimeEntry.work_date >= body.start_date)
+        if body.end_date:
+            query = query.where(TimeEntry.work_date <= body.end_date)
+        if body.status:
+            query = query.where(TimeEntry.status == body.status)
+        if body.project_id:
+            # Project visibility follows the same scoped entry predicate; an
+            # unknown/out-of-scope project therefore yields no rows.
+            query = query.where(TimeEntry.project_id == body.project_id)
+        if body.employee_id:
+            require_visible_employee(session, actor, body.employee_id)
+            query = query.where(TimeEntry.employee_id == body.employee_id)
+        query = query.group_by(dimension)
+        query = query.order_by(metric.desc() if body.order == "desc" else metric.asc())
+        query = query.limit(body.limit)
+
+        # SQLite enforces query-only mode on this connection during execution.
+        # No caller-provided SQL, table, column, expression, or sort clause is
+        # accepted; Pydantic enums select every query component above.
+        raw_connection = session.connection().connection.driver_connection
+        deadline = monotonic() + ANALYTICS_TIMEOUT_SECONDS
+        raw_connection.execute("PRAGMA query_only=ON")
+        raw_connection.set_progress_handler(
+            lambda: int(monotonic() > deadline), 1000
+        )
+        try:
+            try:
+                rows = session.execute(query).all()
+            except OperationalError as exc:
+                if "interrupted" in str(exc).casefold():
+                    raise HTTPException(
+                        408, "Analytics query exceeded its execution budget"
+                    ) from exc
+                raise
+        finally:
+            raw_connection.set_progress_handler(None, 0)
+            raw_connection.execute("PRAGMA query_only=OFF")
+        return {
+            "dimension": body.dimension,
+            "metric": body.metric,
+            "row_count": len(rows),
+            "rows": [
+                {"dimension": str(row.dimension), "value": str(row.value)}
+                for row in rows
+            ],
+        }
+
     @app.get(
         "/stats/hours-by-project",
         response_model=list[ProjectHoursStat],
@@ -318,6 +530,55 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
             )
         )
 
+    @app.get(
+        "/time-entry-suggestions",
+        response_model=list[TimeEntrySuggestionOut],
+        tags=["queries"],
+    )
+    def time_entry_suggestions(
+        session: SessionDep,
+        actor: ActorDep,
+        target_date: date | None = None,
+    ) -> list[dict]:
+        """Suggest recent personal work without creating a pending action."""
+
+        suggestion_date = target_date or _business_today()
+        memberships = set(
+            session.scalars(
+                select(ProjectMember.project_id).where(
+                    ProjectMember.employee_id == actor.id
+                )
+            )
+        )
+        recent_entries = session.scalars(
+            select(TimeEntry)
+            .where(
+                TimeEntry.employee_id == actor.id,
+                TimeEntry.project_id.in_(memberships),
+            )
+            .order_by(TimeEntry.work_date.desc(), TimeEntry.id.desc())
+        )
+        suggestions: list[dict] = []
+        seen_projects: set[int] = set()
+        for entry in recent_entries:
+            if entry.project_id in seen_projects or entry.project.status != "active":
+                continue
+            seen_projects.add(entry.project_id)
+            suggestions.append(
+                {
+                    "project_id": entry.project_id,
+                    "project_name": entry.project.name,
+                    "target_date": suggestion_date,
+                    "suggested_hours": entry.hours,
+                    "suggested_description": entry.description,
+                    "based_on_entry_id": entry.id,
+                    "based_on_date": entry.work_date,
+                }
+            )
+            if len(suggestions) == 3:
+                break
+        return suggestions
+
     @app.post(
         "/time-entries/dry-run",
         response_model=DryRunResponse,
@@ -327,36 +588,40 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
     def dry_run_time_entry(
         body: TimeEntryDraftRequest, session: SessionDep, actor: ActorDep
     ) -> DryRunResponse:
-        employee_id = body.employee_id or actor.id
-        if actor.role != "admin" and employee_id != actor.id:
-            raise HTTPException(
-                status_code=403, detail="Only admins may draft for another employee"
-            )
-        employee = session.get(Employee, employee_id)
-        project = session.get(Project, body.project_id)
-        if employee is None or project is None:
-            raise HTTPException(status_code=404, detail="Employee or project not found")
-        membership = session.scalar(
-            select(ProjectMember).where(
-                ProjectMember.employee_id == employee_id,
-                ProjectMember.project_id == body.project_id,
-            )
-        )
-        if membership is None:
-            raise HTTPException(
-                status_code=422, detail="Employee is not a member of this project"
-            )
-        payload = body.model_dump(mode="json")
-        payload["employee_id"] = employee_id
+        payload, preview = _prepare_time_entry_preview(session, actor, body)
         action = _pending_action(session, actor, "create_time_entry", payload)
-        preview = {
-            **payload,
-            "employee_name": employee.name,
-            "project_name": project.name,
-            "status": "draft",
-        }
         return DryRunResponse(
             action="create_time_entry",
+            preview=_serialize_preview(preview),
+            confirmation_token=action.token,
+            expires_at=action.expires_at,
+        )
+
+    @app.post(
+        "/time-entries/batch/dry-run",
+        response_model=DryRunResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["writes"],
+    )
+    def dry_run_time_entry_batch(
+        body: TimeEntryBatchDraftRequest,
+        session: SessionDep,
+        actor: ActorDep,
+    ) -> DryRunResponse:
+        """Validate an entire batch before issuing one confirmation token."""
+
+        prepared = [
+            _prepare_time_entry_preview(session, actor, entry)
+            for entry in body.entries
+        ]
+        payload = {"entries": [item[0] for item in prepared]}
+        preview = {
+            "count": len(prepared),
+            "entries": [item[1] for item in prepared],
+        }
+        action = _pending_action(session, actor, "create_time_entries", payload)
+        return DryRunResponse(
+            action="create_time_entries",
             preview=_serialize_preview(preview),
             confirmation_token=action.token,
             expires_at=action.expires_at,
@@ -486,6 +751,54 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
             session.flush()
             result = TimeEntryOut.model_validate(entry).model_dump(mode="json")
             resource_id = str(entry.id)
+        elif action.action_type == "create_time_entries":
+            created_entries: list[TimeEntry] = []
+            for item in payload["entries"]:
+                employee = session.get(Employee, item["employee_id"])
+                project = session.get(Project, item["project_id"])
+                if employee is None or project is None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="A batch employee or project no longer exists",
+                    )
+                if actor.role != "admin" and employee.id != actor.id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Actor is no longer authorized for this batch",
+                    )
+                membership = session.scalar(
+                    select(ProjectMember).where(
+                        ProjectMember.employee_id == employee.id,
+                        ProjectMember.project_id == project.id,
+                    )
+                )
+                if membership is None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "An employee is no longer a member of a batch project"
+                        ),
+                    )
+                created_entries.append(
+                    TimeEntry(
+                        employee_id=employee.id,
+                        project_id=project.id,
+                        work_date=date.fromisoformat(item["work_date"]),
+                        hours=Decimal(item["hours"]),
+                        description=item["description"],
+                        status="draft",
+                    )
+                )
+            session.add_all(created_entries)
+            session.flush()
+            result = {
+                "count": len(created_entries),
+                "time_entries": [
+                    TimeEntryOut.model_validate(entry).model_dump(mode="json")
+                    for entry in created_entries
+                ],
+            }
+            resource_id = f"batch:{len(created_entries)}"
         elif action.action_type == "decide_time_entry":
             entry = session.get(TimeEntry, payload["entry_id"])
             if entry is None:

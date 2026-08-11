@@ -2,7 +2,11 @@
 {"id":"departments-zh","actor_id":3,"message":"我能看到哪些部门？","expected_tool":"list_departments","expected_text":"Product Engineering"}
 {"id":"hours-range","actor_id":3,"message":"How many hours did I log on Apollo this week?","expected_tool":"list_time_entries","expected_text":"13.50 hours"}
 {"id":"submitted-list","actor_id":3,"message":"Show my last 1 submitted time entries","expected_tool":"list_time_entries","expected_text":"submitted"}
-{"id":"manager-pending","actor_id":2,"message":"Can I approve my team's pending time entries?","expected_tool":"list_time_entries","expected_text":"read-only for approvals","expect_confirmation":false}
+{"id":"manager-pending","actor_id":2,"message":"Can I approve my team's pending time entries?","expected_tool":"list_time_entries","expected_text":"only inspected the queue","expect_confirmation":false}
+{"id":"manager-approval-dry-run","actor_id":2,"message":"Approve time entry 2, comment: Looks complete","expected_tool":"dry_run_time_entry_approval","expected_text":"dry-run","expect_confirmation":true}
+{"id":"project-comparison","actor_id":3,"message":"Compare Apollo and Beacon hours this week","expected_tool":"list_time_entries","expected_text":"comparison slices","expect_confirmation":false}
+{"id":"safe-sql-analysis","actor_id":3,"message":"SQL analysis: group hours by status this week","expected_tool":"execute_safe_analytics_query","expected_text":"safe analytics compiler","expect_confirmation":false}
+{"id":"compound-policy","actor_id":3,"message":"What are the submission deadline and manager approval rules?","expected_tool":"retrieve_policy","expected_citation":"time-reporting","expected_text":"12:00 noon","expect_confirmation":false}
 {"id":"policy-grounded","actor_id":3,"message":"What is the weekly time submission deadline policy?","expected_tool":"retrieve_policy","expected_citation":"time-reporting","expected_text":"12:00 noon"}
 {"id":"policy-refusal","actor_id":3,"message":"What is the spaceship parking policy?","expected_tool":"retrieve_policy","expected_citation":null,"expected_text":"could not find enough evidence"}
 {"id":"incomplete-write","actor_id":3,"message":"Draft 2 hours: follow-up work","expected_text":"exact values","expect_confirmation":false}

@@ -36,6 +36,63 @@ def test_seed_contains_approval_history(client, employee_headers):
     assert response.json()[0]["decision"] == "approved"
 
 
+def test_weekly_report_and_csv_remain_role_scoped(client, employee_headers):
+    report = client.get("/reports/weekly", headers=employee_headers)
+    assert report.status_code == 200
+    body = report.json()
+    assert body["entry_count"] >= 1
+    assert {entry["employee_id"] for entry in body["entries"]} == {3}
+
+    exported = client.get(
+        f"/reports/weekly.csv?week_start={body['week_start']}",
+        headers=employee_headers,
+    )
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith("text/csv")
+    assert "attachment;" in exported.headers["content-disposition"]
+    assert "employee_name" in exported.text
+    assert "Jamie Rivera" in exported.text
+
+
+def test_safe_analytics_query_is_role_scoped_and_declarative(
+    client, employee_headers
+):
+    before = client.get("/time-entries", headers=employee_headers).json()
+    response = client.post(
+        "/analytics/query",
+        headers=employee_headers,
+        json={"dimension": "employee", "metric": "hours"},
+    )
+    assert response.status_code == 200
+    assert {row["dimension"] for row in response.json()["rows"]} == {
+        "Jamie Rivera"
+    }
+    after = client.get("/time-entries", headers=employee_headers).json()
+    assert after == before
+
+
+def test_safe_analytics_rejects_sql_text_and_invisible_employee(
+    client, employee_headers
+):
+    injection = client.post(
+        "/analytics/query",
+        headers=employee_headers,
+        json={"dimension": "project; DROP TABLE employees", "metric": "hours"},
+    )
+    assert injection.status_code == 422
+
+    invisible = client.post(
+        "/analytics/query",
+        headers=employee_headers,
+        json={
+            "dimension": "project",
+            "metric": "entry_count",
+            "employee_id": 4,
+        },
+    )
+    assert invisible.status_code == 403
+
+
 def test_time_entry_dry_run_does_not_create_business_record(
     client, employee_headers
 ):
@@ -52,8 +109,92 @@ def test_time_entry_dry_run_does_not_create_business_record(
     )
     assert response.status_code == 201
     assert response.json()["dry_run"] is True
+    assert response.json()["expires_at"].endswith("Z")
     after = client.get("/time-entries", headers=employee_headers).json()
     assert len(after) == len(before)
+
+
+def test_personal_suggestions_are_grounded_in_recent_visible_work(
+    client, employee_headers
+):
+    response = client.get(
+        "/time-entry-suggestions?target_date=2026-07-30",
+        headers=employee_headers,
+    )
+
+    assert response.status_code == 200
+    suggestion = response.json()[0]
+    assert suggestion["project_name"] == "Apollo"
+    assert suggestion["target_date"] == "2026-07-30"
+    assert suggestion["based_on_entry_id"] in {1, 2}
+    assert suggestion["suggested_description"]
+
+
+def test_batch_dry_run_and_confirmation_are_atomic(client, employee_headers):
+    before = client.get("/time-entries", headers=employee_headers).json()
+    preview = client.post(
+        "/time-entries/batch/dry-run",
+        headers=employee_headers,
+        json={
+            "entries": [
+                {
+                    "project_id": 1,
+                    "work_date": "2026-07-30",
+                    "hours": "1.50",
+                    "description": "Prepared API examples",
+                },
+                {
+                    "project_id": 1,
+                    "work_date": "2026-07-31",
+                    "hours": "2.00",
+                    "description": "Reviewed API examples",
+                },
+            ]
+        },
+    )
+
+    assert preview.status_code == 201
+    assert preview.json()["preview"]["count"] == 2
+    unchanged = client.get("/time-entries", headers=employee_headers).json()
+    assert len(unchanged) == len(before)
+
+    confirmed = client.post(
+        f"/actions/{preview.json()['confirmation_token']}/confirm",
+        headers=employee_headers,
+        json={"confirm": True},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["result"]["count"] == 2
+    after = client.get("/time-entries", headers=employee_headers).json()
+    assert len(after) == len(before) + 2
+
+
+def test_batch_rejects_an_unauthorized_item_without_pending_action(
+    client, employee_headers
+):
+    response = client.post(
+        "/time-entries/batch/dry-run",
+        headers=employee_headers,
+        json={
+            "entries": [
+                {
+                    "project_id": 1,
+                    "work_date": "2026-07-30",
+                    "hours": "1.00",
+                    "description": "Allowed item",
+                },
+                {
+                    "employee_id": 4,
+                    "project_id": 1,
+                    "work_date": "2026-07-31",
+                    "hours": "1.00",
+                    "description": "Forbidden item",
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 403
 
 
 def test_time_entry_requires_explicit_confirmation(client, employee_headers):

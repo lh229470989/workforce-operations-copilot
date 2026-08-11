@@ -18,6 +18,7 @@ async def build_planner_context(
     core: CoreAPIClient,
     actor_id: int,
     session: SessionRecord,
+    preferences: dict[str, object] | None = None,
 ) -> PlannerContext:
     """Combine short conversation history with fresh, authorized Core data."""
 
@@ -28,6 +29,11 @@ async def build_planner_context(
     departments = await core.list_departments(actor_id)
     projects = await core.list_projects(actor_id)
     recent_entries = (await core.list_time_entries(actor_id))[:5]
+    supplied_preferences = preferences or {}
+    preferred_id = supplied_preferences.get("preferred_project_id")
+    preferred_project = next(
+        (project for project in projects if project["id"] == preferred_id), None
+    )
     return PlannerContext(
         session_id=session.session_id,
         turns=session.turns,
@@ -35,6 +41,19 @@ async def build_planner_context(
         departments=departments,
         projects=projects,
         recent_time_entries=recent_entries,
+        preferences={
+            "history_enabled": supplied_preferences.get("history_enabled", True),
+            "preferred_language": supplied_preferences.get(
+                "preferred_language", "auto"
+            ),
+            # Re-resolve the preference against current authorized projects;
+            # stale preferences never grant project visibility.
+            "preferred_project": (
+                {"id": preferred_project["id"], "name": preferred_project["name"]}
+                if preferred_project
+                else None
+            ),
+        },
     )
 
 
