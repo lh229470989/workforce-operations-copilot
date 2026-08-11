@@ -308,6 +308,14 @@ function ConfirmationCard({
               ? "Review batch time entry draft"
               : confirmation.action === "decide_time_entry"
                 ? "Review approval decision"
+                : confirmation.action === "decide_time_entries"
+                  ? "Review batch approval decision"
+                : confirmation.action === "update_time_entry"
+                  ? "Review time entry changes"
+                  : confirmation.action === "delete_time_entry"
+                    ? "Review time entry deletion"
+                    : confirmation.action === "transition_time_entry"
+                      ? "Review status transition"
                 : "Review time entry draft"}
           </h3>
         </div>
@@ -347,6 +355,12 @@ function ConfirmationCard({
               ? "Confirmed"
               : confirmation.action === "decide_time_entry"
                 ? "Confirm decision"
+                : confirmation.action === "decide_time_entries"
+                  ? "Confirm batch decision"
+                : confirmation.action === "delete_time_entry"
+                  ? "Confirm deletion"
+                  : confirmation.action === "update_time_entry" || confirmation.action === "transition_time_entry"
+                    ? "Confirm change"
                 : "Confirm & create"}
         </button>
       </div>
@@ -417,6 +431,8 @@ type PreferenceState = {
   history_enabled: boolean;
   preferred_language: "auto" | "en" | "zh";
   preferred_project_id: number | null;
+  response_detail: "concise" | "standard" | "detailed";
+  report_format: "summary" | "csv";
 };
 
 type PreferencePreview = {
@@ -430,6 +446,8 @@ function PrivacyControls({ actorId }: { actorId: number }) {
   const [historyEnabled, setHistoryEnabled] = useState(true);
   const [language, setLanguage] = useState<"auto" | "en" | "zh">("auto");
   const [preferredProject, setPreferredProject] = useState("");
+  const [responseDetail, setResponseDetail] = useState<"concise" | "standard" | "detailed">("standard");
+  const [reportFormat, setReportFormat] = useState<"summary" | "csv">("summary");
   const [preview, setPreview] = useState<PreferencePreview | null>(null);
   const [notice, setNotice] = useState("");
 
@@ -440,6 +458,8 @@ function PrivacyControls({ actorId }: { actorId: number }) {
     setCurrent(payload); setHistoryEnabled(payload.history_enabled);
     setLanguage(payload.preferred_language);
     setPreferredProject(payload.preferred_project_id?.toString() ?? "");
+    setResponseDetail(payload.response_detail);
+    setReportFormat(payload.report_format);
     setPreview(null); setNotice("");
   }
 
@@ -452,6 +472,8 @@ function PrivacyControls({ actorId }: { actorId: number }) {
         preferred_language: language,
         preferred_project_id: preferredProject ? Number(preferredProject) : undefined,
         clear_preferred_project: !preferredProject,
+        response_detail: responseDetail,
+        report_format: reportFormat,
       }),
     });
     if (response.ok) setPreview((await response.json()) as PreferencePreview);
@@ -487,12 +509,74 @@ function PrivacyControls({ actorId }: { actorId: number }) {
           <label><input checked={historyEnabled} onChange={(event) => setHistoryEnabled(event.target.checked)} type="checkbox" /> Persist bounded chat history</label>
           <label>Reply preference<select value={language} onChange={(event) => setLanguage(event.target.value as "auto" | "en" | "zh")}><option value="auto">Match request</option><option value="en">English</option><option value="zh">中文</option></select></label>
           <label>Preferred visible project ID<input min="1" onChange={(event) => setPreferredProject(event.target.value)} placeholder="Optional" type="number" value={preferredProject} /></label>
+          <label>Response detail<select value={responseDetail} onChange={(event) => setResponseDetail(event.target.value as "concise" | "standard" | "detailed")}><option value="concise">Concise</option><option value="standard">Standard</option><option value="detailed">Detailed</option></select></label>
+          <label>Default report format<select value={reportFormat} onChange={(event) => setReportFormat(event.target.value as "summary" | "csv")}><option value="summary">On-screen summary</option><option value="csv">CSV download</option></select></label>
           <button type="button" onClick={() => void prepareUpdate()}>Preview changes</button>
           <button className="danger-link" type="button" onClick={() => void prepareDeletion()}>Preview private-state deletion</button>
         </>
       )}
       {preview && <div className="privacy-preview"><strong>DRY RUN · {preview.action.replaceAll("_", " ")}</strong><pre>{JSON.stringify(preview.preview, null, 2)}</pre><button type="button" onClick={() => void confirm()}>Explicitly confirm</button><button type="button" onClick={() => setPreview(null)}>Dismiss</button></div>}
       {notice && <p>{notice}</p>}
+    </details>
+  );
+}
+
+function ReportControls({ actorId }: { actorId: number }) {
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [status, setStatus] = useState("");
+  const [projectId, setProjectId] = useState("");
+  const [employeeId, setEmployeeId] = useState("");
+  const query = new URLSearchParams({ actorId: String(actorId) });
+  if (startDate) query.set("start_date", startDate);
+  if (endDate) query.set("end_date", endDate);
+  if (status) query.set("status", status);
+  if (projectId) query.set("project_id", projectId);
+  if (employeeId) query.set("employee_id", employeeId);
+  return (
+    <details className="privacy-controls">
+      <summary>Report export</summary>
+      <label>From<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
+      <label>To<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
+      <label>Status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All visible</option><option value="draft">Draft</option><option value="submitted">Submitted</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></label>
+      <label>Project ID<input min="1" type="number" value={projectId} onChange={(event) => setProjectId(event.target.value)} placeholder="Optional" /></label>
+      <label>Employee ID<input min="1" type="number" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)} placeholder="Optional / scoped" /></label>
+      <a className="secondary-button" href={`/api/reports/time-entries.csv?${query}`}>Download scoped CSV</a>
+    </details>
+  );
+}
+
+type AuditItem = { id: number; actor_id: number; action: string; resource_id: string; created_at: string };
+
+function AdminControls({ actorId }: { actorId: number }) {
+  const [audit, setAudit] = useState<AuditItem[]>([]);
+  const [notice, setNotice] = useState("");
+  const [auditStats, setAuditStats] = useState<{ total: number; by_action: Record<string, number> } | null>(null);
+  if (actorId !== 1) return null;
+
+  async function loadAudit() {
+    const [eventsResponse, statsResponse] = await Promise.all([
+      fetch(`/api/admin/audit?actorId=${actorId}&page_size=8`, { cache: "no-store" }),
+      fetch(`/api/admin/audit?actorId=${actorId}&stats=1`, { cache: "no-store" }),
+    ]);
+    if (eventsResponse.ok) setAudit(((await eventsResponse.json()) as { items: AuditItem[] }).items);
+    if (statsResponse.ok) setAuditStats(await statsResponse.json() as { total: number; by_action: Record<string, number> });
+  }
+
+  async function reloadKnowledge() {
+    const response = await fetch(`/api/admin/knowledge?actorId=${actorId}`, { method: "POST" });
+    const payload = await response.json() as { documents?: number; chunks?: number; detail?: string };
+    setNotice(response.ok ? `Reloaded ${payload.documents} documents / ${payload.chunks} chunks.` : payload.detail ?? "Reload failed.");
+  }
+
+  return (
+    <details className="privacy-controls">
+      <summary>Admin operations</summary>
+      <button type="button" onClick={() => void loadAudit()}>Load audit events</button>
+      <button type="button" onClick={() => void reloadKnowledge()}>Reload knowledge base</button>
+      {notice && <p>{notice}</p>}
+      {auditStats && <p>{auditStats.total} confirmed write event(s) · {Object.keys(auditStats.by_action).length} action type(s)</p>}
+      {audit.length > 0 && <ul>{audit.map((item) => <li key={item.id}><strong>{item.action}</strong> · actor {item.actor_id} · #{item.resource_id}</li>)}</ul>}
     </details>
   );
 }
@@ -588,6 +672,20 @@ export function ChatWorkspace() {
             ),
           );
         }
+        if (eventName === "delta" && typeof payload.text === "string") {
+          setConversation((items) =>
+            items.map((item) =>
+              item.id === id
+                ? { ...item, streamingText: `${item.streamingText ?? ""}${payload.text}` }
+                : item,
+            ),
+          );
+        }
+        if (eventName === "error") {
+          throw new Error(
+            typeof payload.detail === "string" ? payload.detail : "Agent stream failed",
+          );
+        }
         if (eventName === "result") {
           finalPayload = payload as ChatResponse;
           if (finalPayload.session_id) {
@@ -595,7 +693,9 @@ export function ChatWorkspace() {
           }
           setConversation((items) =>
             items.map((item) =>
-              item.id === id ? { ...item, response: finalPayload ?? undefined } : item,
+              item.id === id
+                ? { ...item, response: finalPayload ?? undefined, streamingText: undefined }
+                : item,
             ),
           );
         }
@@ -680,6 +780,8 @@ export function ChatWorkspace() {
           </p>
         </div>
         <PrivacyControls actorId={actorId} key={actorId} />
+        <ReportControls actorId={actorId} key={`report-${actorId}`} />
+        <AdminControls actorId={actorId} key={`admin-${actorId}`} />
       </aside>
 
       <section className="workspace">
@@ -733,8 +835,17 @@ export function ChatWorkspace() {
                   response={item.response}
                 />
               )}
+              {!item.response && item.streamingText && (
+                <div className="assistant-block" aria-live="polite">
+                  <div className="assistant-mark">A</div>
+                  <div className="assistant-content">
+                    <div className="response-meta"><strong>Acme Copilot</strong><span>LLM agent · streaming</span></div>
+                    <p className="assistant-message">{item.streamingText}<span className="stream-cursor" aria-hidden="true">▍</span></p>
+                  </div>
+                </div>
+              )}
               {item.error && <div className="error-card">{item.error}</div>}
-              {!item.response && !item.error && (
+              {!item.response && !item.error && !item.streamingText && (
                 item.progress && item.progress.length > 0 ? (
                   <AgentProgress events={item.progress} />
                 ) : (

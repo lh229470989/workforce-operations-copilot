@@ -97,7 +97,7 @@ class FakeCoreClient:
     async def get_me(self, actor_id):
         if actor_id not in {1, 2, 3}:
             raise HTTPException(status_code=401, detail="Unknown actor")
-        role = "manager" if actor_id == 2 else "employee"
+        role = "admin" if actor_id == 1 else "manager" if actor_id == 2 else "employee"
         return {
             "id": actor_id,
             "name": "Morgan Lee" if actor_id == 2 else "Jamie Rivera",
@@ -264,6 +264,31 @@ class FakeCoreClient:
                 "hours": "6.00",
             },
             "confirmation_token": "approval-demo-token",
+            "expires_at": "2026-07-22T12:15:00Z",
+        }
+
+    async def dry_run_approval_batch(self, actor_id, payload):
+        return {
+            "dry_run": True,
+            "action": "decide_time_entries",
+            "preview": {"count": len(payload["entry_ids"]), **payload},
+            "confirmation_token": "approval-batch-token",
+            "expires_at": "2026-07-22T12:15:00Z",
+        }
+
+    async def dry_run_time_entry_lifecycle(
+        self, actor_id, time_entry_id, action, payload=None
+    ):
+        return {
+            "dry_run": True,
+            "action": {
+                "update": "update_time_entry",
+                "delete": "delete_time_entry",
+                "submit": "transition_time_entry",
+                "withdraw": "transition_time_entry",
+            }[action],
+            "preview": {"entry_id": time_entry_id, "action": action, "changes": payload},
+            "confirmation_token": "lifecycle-token",
             "expires_at": "2026-07-22T12:15:00Z",
         }
 

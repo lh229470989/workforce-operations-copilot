@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 
 class ORMModel(BaseModel):
@@ -76,6 +76,23 @@ class TimeEntryBatchDraftRequest(BaseModel):
     entries: list[TimeEntryDraftRequest] = Field(min_length=1, max_length=10)
 
 
+class TimeEntryUpdateRequest(BaseModel):
+    """Editable fields for an existing draft; status changes use dedicated actions."""
+
+    project_id: int | None = Field(default=None, ge=1)
+    work_date: date | None = None
+    hours: Decimal | None = Field(
+        default=None, gt=0, le=24, max_digits=4, decimal_places=2
+    )
+    description: str | None = Field(default=None, min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def require_change(self):
+        if not self.model_fields_set:
+            raise ValueError("At least one editable field is required")
+        return self
+
+
 class TimeEntrySuggestionOut(BaseModel):
     """A non-authoritative suggestion grounded in one personal recent entry."""
 
@@ -105,6 +122,16 @@ class SafeAnalyticsQuery(BaseModel):
 class ApprovalDryRunRequest(BaseModel):
     decision: Literal["approved", "rejected"]
     comment: str | None = Field(default=None, max_length=500)
+
+
+class ApprovalBatchDryRunRequest(ApprovalDryRunRequest):
+    entry_ids: list[int] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def require_unique_entries(self):
+        if len(set(self.entry_ids)) != len(self.entry_ids):
+            raise ValueError("entry_ids must be unique")
+        return self
 
 
 class DryRunResponse(BaseModel):

@@ -43,13 +43,17 @@ model configuration. Web verification steps are in
 - Review personal time-entry suggestions derived from recent fictional work.
 - Draft a time entry, inspect a dry-run preview, then explicitly approve it.
 - Draft up to 10 time entries as one atomic dry-run and confirmation.
+- Edit, delete, submit, or withdraw an exact entry through the same two-step boundary.
 - Let an authorized manager propose approval or rejection for an exact entry,
   then confirm it through the same separate write boundary.
+- Batch-decide up to 20 submitted entries after atomic scope validation.
 - Compare monthly project hours with a chart.
 - Compare 2–4 authorized project or date slices through a validated multi-tool plan.
 - Ask compound policy questions with hybrid retrieval and evidence coverage.
 - Run declarative analytics through a role-scoped, query-only SQL compiler.
 - Demonstrate role-aware access for employee, manager, and admin personas.
+- Stream model text deltas, export scoped time slices, inspect admin audit
+  metadata, hot-reload policies, and keep user-controlled structured preferences.
 
 ## Architecture
 

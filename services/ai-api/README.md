@@ -180,6 +180,16 @@ and cite only original AcmeWorks policy sections.
 
 ## Operations
 
+`POST /chat/stream` emits `delta` events while the configured model composes
+the answer, followed by the authoritative structured `result`. Confirmation
+tokens are never present in intermediate events. Admin actor `1` may inspect
+and hot-reload authored policy Markdown through `GET /knowledge` and
+`POST /knowledge/reload`.
+
+Structured long-term preferences include response detail and default report
+format in addition to bounded history, language, and preferred visible project.
+They can shape wording and read defaults, but never authorization or write data.
+
 - `/health` reports process health and planner mode.
 - `/ready` checks Core API connectivity and reports loaded policy chunks.
 - `/observability` returns a JSON snapshot of request and intent counters.

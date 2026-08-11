@@ -346,3 +346,62 @@ def test_statistics_are_role_scoped(client, employee_headers, manager_headers):
     assert manager == [
         {"project_id": 1, "project_name": "Apollo", "hours": "22.00"}
     ]
+
+
+def test_draft_lifecycle_requires_fresh_confirmation(client, employee_headers):
+    preview = client.post(
+        "/time-entries/dry-run", headers=employee_headers,
+        json={"project_id": 1, "work_date": "2026-07-30", "hours": "2.00", "description": "Lifecycle draft"},
+    ).json()
+    entry = client.post(
+        f"/actions/{preview['confirmation_token']}/confirm", headers=employee_headers, json={"confirm": True}
+    ).json()["result"]
+    entry_id = entry["id"]
+
+    update = client.patch(
+        f"/time-entries/{entry_id}/dry-run", headers=employee_headers,
+        json={"hours": "3.25", "description": "Updated lifecycle draft"},
+    ).json()
+    assert client.get(f"/time-entries/{entry_id}", headers=employee_headers).json()["hours"] == "2.00"
+    changed = client.post(
+        f"/actions/{update['confirmation_token']}/confirm", headers=employee_headers, json={"confirm": True}
+    ).json()["result"]
+    assert changed["hours"] == "3.25"
+
+    for action, expected in (("submit", "submitted"), ("withdraw", "draft")):
+        transition = client.post(
+            f"/time-entries/{entry_id}/{action}/dry-run", headers=employee_headers
+        ).json()
+        changed = client.post(
+            f"/actions/{transition['confirmation_token']}/confirm", headers=employee_headers, json={"confirm": True}
+        ).json()["result"]
+        assert changed["status"] == expected
+
+    deletion = client.delete(f"/time-entries/{entry_id}/dry-run", headers=employee_headers).json()
+    result = client.post(
+        f"/actions/{deletion['confirmation_token']}/confirm", headers=employee_headers, json={"confirm": True}
+    ).json()["result"]
+    assert result == {"entry_id": entry_id, "deleted": True}
+
+
+def test_batch_approval_and_admin_audit(client, manager_headers, admin_headers):
+    preview = client.post(
+        "/time-entries/approvals/batch/dry-run", headers=manager_headers,
+        json={"entry_ids": [2, 3], "decision": "approved", "comment": "Batch review"},
+    )
+    assert preview.status_code == 201
+    confirmed = client.post(
+        f"/actions/{preview.json()['confirmation_token']}/confirm", headers=manager_headers, json={"confirm": True}
+    )
+    assert confirmed.json()["result"]["count"] == 2
+    assert client.get("/audit-events", headers=manager_headers).status_code == 403
+    audit = client.get("/audit-events", headers=admin_headers).json()
+    assert audit["items"][0]["action"] == "decide_time_entries"
+    assert "details" not in audit["items"][0]
+
+
+def test_general_csv_export_reuses_role_scope(client, employee_headers):
+    response = client.get("/reports/time-entries.csv?status=submitted", headers=employee_headers)
+    assert response.status_code == 200
+    assert "Jamie Rivera" in response.text
+    assert "Refined analytics workspace prototype" not in response.text

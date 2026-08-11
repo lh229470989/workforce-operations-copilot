@@ -376,6 +376,15 @@ button {
   margin: 10px 0 16px;
 }
 
+.stream-cursor {
+  color: var(--accent, #b7ff5a);
+  animation: stream-blink 0.9s steps(1) infinite;
+}
+
+@keyframes stream-blink {
+  50% { opacity: 0; }
+}
+
 .tools {
   display: grid;
   gap: 7px;

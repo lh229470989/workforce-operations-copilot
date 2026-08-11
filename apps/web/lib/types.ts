@@ -119,5 +119,6 @@ export type ConversationItem = {
   prompt: string;
   response?: ChatResponse;
   progress?: AgentProgressEvent[];
+  streamingText?: string;
   error?: string;
 };

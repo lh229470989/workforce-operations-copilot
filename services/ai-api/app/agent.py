@@ -317,6 +317,30 @@ def build_agent(
                 )
             }
 
+        if plan.intent == "decide_time_entries":
+            if not plan.time_entry_ids or plan.approval_decision is None:
+                return {"result": ExecutionResult(message="Provide 1–20 exact entry IDs and an approve or reject decision.")}
+            actor = await core.get_me(actor_id)
+            events = [tool_event("get_current_actor", {}, actor)]
+            if actor["role"] == "employee":
+                return {"result": ExecutionResult(message="Employees cannot approve or reject time entries, so no dry-run was created.", tool_events=events)}
+            payload = {
+                "entry_ids": plan.time_entry_ids,
+                "decision": plan.approval_decision,
+                "comment": plan.approval_comment,
+            }
+            preview = await core.dry_run_approval_batch(actor_id, payload)
+            events.append(tool_event("dry_run_time_entry_approval_batch", payload, preview))
+            card = ConfirmationCard(
+                action=preview["action"], preview=preview["preview"],
+                confirmation_token=preview["confirmation_token"], expires_at=preview["expires_at"],
+                confirm_path=f"/actions/{preview['confirmation_token']}/confirm",
+            )
+            return {"result": ExecutionResult(
+                message=f"I prepared an atomic {len(plan.time_entry_ids)}-entry approval dry-run. Nothing changed yet.",
+                tool_events=events, data=preview["preview"], confirmation=card,
+            )}
+
         if plan.intent == "decide_time_entry":
             if plan.time_entry_id is None or plan.approval_decision is None:
                 return {
@@ -509,6 +533,46 @@ def build_agent(
                 )
             }
 
+        if plan.intent == "manage_time_entry":
+            if plan.time_entry_id is None or plan.lifecycle_action is None:
+                return {"result": ExecutionResult(message="Specify an exact time-entry ID and lifecycle action.")}
+            payload = None
+            events = []
+            if plan.lifecycle_action == "update":
+                payload = {}
+                if plan.project_id or plan.project_name:
+                    projects = await core.list_projects(actor_id)
+                    events.append(tool_event("list_projects", {}, projects))
+                    project = resolve_project(projects, plan)
+                    if project is None:
+                        return {"result": ExecutionResult(message="That project is not available in your authorized scope.", tool_events=events)}
+                    payload["project_id"] = project["id"]
+                if plan.work_date is not None:
+                    payload["work_date"] = plan.work_date.isoformat()
+                if plan.hours is not None:
+                    payload["hours"] = str(plan.hours)
+                if plan.description is not None:
+                    payload["description"] = plan.description
+                if not payload:
+                    return {"result": ExecutionResult(message="Specify at least one exact field to update: project, date, hours, or description.")}
+            preview = await core.dry_run_time_entry_lifecycle(
+                actor_id, plan.time_entry_id, plan.lifecycle_action, payload
+            )
+            events.append(tool_event(f"dry_run_time_entry_{plan.lifecycle_action}", payload or {"entry_id": plan.time_entry_id}, preview))
+            card = ConfirmationCard(
+                action=preview["action"],
+                preview=preview["preview"],
+                confirmation_token=preview["confirmation_token"],
+                expires_at=preview["expires_at"],
+                confirm_path=f"/actions/{preview['confirmation_token']}/confirm",
+            )
+            return {"result": ExecutionResult(
+                message=f"I prepared a {plan.lifecycle_action} dry-run for time entry {plan.time_entry_id}. Nothing changed yet.",
+                tool_events=events,
+                data=preview["preview"],
+                confirmation=card,
+            )}
+
         if plan.intent == "draft_time_entry":
             events = []
             missing = [
@@ -582,6 +646,8 @@ def build_agent(
                 "draft_time_entry",
                 "draft_time_entries_batch",
                 "decide_time_entry",
+                "decide_time_entries",
+                "manage_time_entry",
             }
             and result.confirmation is None
         ):

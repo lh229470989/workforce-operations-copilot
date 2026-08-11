@@ -1,5 +1,6 @@
 import json
 import logging
+from contextvars import ContextVar
 from hashlib import sha256
 from typing import Any, Protocol
 
@@ -8,6 +9,23 @@ from openai import AsyncOpenAI
 from .schemas import AgentPlan, ExecutionResult, PlannerContext
 
 logger = logging.getLogger(__name__)
+_stream_sink: ContextVar[Any | None] = ContextVar("composer_stream_sink", default=None)
+
+
+def set_stream_sink(sink: Any):
+    """Attach one request-local delta callback."""
+
+    return _stream_sink.set(sink)
+
+
+def reset_stream_sink(token: Any) -> None:
+    _stream_sink.reset(token)
+
+
+async def _emit_delta(delta: str) -> None:
+    sink = _stream_sink.get()
+    if sink is not None and delta:
+        await sink(delta)
 
 
 class ResponseComposer(Protocol):
@@ -36,6 +54,7 @@ class LocalComposer:
         context: PlannerContext | None,
         actor_id: int,
     ) -> str:
+        await _emit_delta(result.message)
         return result.message
 
     async def close(self) -> None:
@@ -162,6 +181,7 @@ class OpenAIComposer:
             message, plan, result
         )
         if visualization_message is not None:
+            await _emit_delta(visualization_message)
             return visualization_message
         payload = {
             "user_message": message,
@@ -195,8 +215,17 @@ class OpenAIComposer:
                 }
             )
         try:
-            response = await self._client.responses.create(**request)
-            answer = response.output_text.strip()
+            if _stream_sink.get() is None:
+                response = await self._client.responses.create(**request)
+                answer = response.output_text.strip()
+            else:
+                parts: list[str] = []
+                async with self._client.responses.stream(**request) as stream:
+                    async for event in stream:
+                        if event.type == "response.output_text.delta":
+                            parts.append(event.delta)
+                            await _emit_delta(event.delta)
+                answer = "".join(parts).strip()
             return answer or result.message
         except Exception as exc:
             # Keep the demo available when the external model is unavailable.
@@ -204,4 +233,5 @@ class OpenAIComposer:
             logger.warning(
                 "llm_composition_failed error_type=%s", type(exc).__name__
             )
+            await _emit_delta(result.message)
             return result.message

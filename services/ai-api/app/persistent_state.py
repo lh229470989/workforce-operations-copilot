@@ -44,6 +44,8 @@ class PersistentStateStore:
                     history_enabled INTEGER NOT NULL DEFAULT 1,
                     preferred_language TEXT NOT NULL DEFAULT 'auto',
                     preferred_project_id INTEGER,
+                    response_detail TEXT NOT NULL DEFAULT 'standard',
+                    report_format TEXT NOT NULL DEFAULT 'summary',
                     updated_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS preference_actions (
@@ -55,6 +57,17 @@ class PersistentStateStore:
                 );
                 """
             )
+            columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(preferences)")
+            }
+            if "response_detail" not in columns:
+                db.execute(
+                    "ALTER TABLE preferences ADD COLUMN response_detail TEXT NOT NULL DEFAULT 'standard'"
+                )
+            if "report_format" not in columns:
+                db.execute(
+                    "ALTER TABLE preferences ADD COLUMN report_format TEXT NOT NULL DEFAULT 'summary'"
+                )
             self._cleanup_expired_records(db, self.clock())
 
     def _connect(self) -> sqlite3.Connection:
@@ -176,12 +189,16 @@ class PersistentStateStore:
                 "history_enabled": True,
                 "preferred_language": "auto",
                 "preferred_project_id": None,
+                "response_detail": "standard",
+                "report_format": "summary",
             }
         return {
             "actor_id": actor_id,
             "history_enabled": bool(row["history_enabled"]),
             "preferred_language": row["preferred_language"],
             "preferred_project_id": row["preferred_project_id"],
+            "response_detail": row["response_detail"],
+            "report_format": row["report_format"],
         }
 
     async def get_preferences(self, actor_id: int) -> dict[str, Any]:
@@ -273,17 +290,23 @@ class PersistentStateStore:
                         "history_enabled": True,
                         "preferred_language": "auto",
                         "preferred_project_id": None,
+                        "response_detail": "standard",
+                        "report_format": "summary",
                         "deleted": True,
                     }
                 current = self._get_preferences(db, actor_id)
                 updated = {**current, **payload}
                 db.execute(
-                    "INSERT OR REPLACE INTO preferences VALUES (?, ?, ?, ?, ?)",
+                    "INSERT OR REPLACE INTO preferences "
+                    "(actor_id, history_enabled, preferred_language, preferred_project_id, response_detail, report_format, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         actor_id,
                         int(updated["history_enabled"]),
                         updated["preferred_language"],
                         updated["preferred_project_id"],
+                        updated["response_detail"],
+                        updated["report_format"],
                         now,
                     ),
                 )

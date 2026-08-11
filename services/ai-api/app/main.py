@@ -10,7 +10,13 @@ from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
 
 from .agent import build_agent
-from .composer import LocalComposer, OpenAIComposer, ResponseComposer
+from .composer import (
+    LocalComposer,
+    OpenAIComposer,
+    ResponseComposer,
+    reset_stream_sink,
+    set_stream_sink,
+)
 from .config import Settings
 from .conversation_context import build_planner_context, summarize_context
 from .core_client import CoreAPIClient
@@ -148,12 +154,19 @@ def create_app(
             "history_enabled": True,
             "preferred_language": "auto",
             "preferred_project_id": None,
+            "response_detail": "standard",
+            "report_format": "summary",
         }
 
     async def require_known_actor(actor_id: int) -> None:
         """Validate demo identity through the authoritative Core API."""
 
         await core.get_me(actor_id)
+
+    async def require_admin_actor(actor_id: int) -> None:
+        actor = await core.get_me(actor_id)
+        if actor.get("role") != "admin":
+            raise HTTPException(403, "Admin role required")
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, object]:
@@ -184,6 +197,28 @@ def create_app(
     @app.get("/observability", tags=["system"])
     async def observability() -> dict[str, object]:
         return metrics.snapshot()
+
+    @app.get("/knowledge", tags=["knowledge"])
+    async def knowledge_status(
+        actor_id: Annotated[int | None, Header(alias="X-Actor-ID")] = None,
+    ) -> dict[str, object]:
+        if actor_id is None:
+            raise HTTPException(401, "X-Actor-ID header is required")
+        await require_admin_actor(actor_id)
+        return {
+            "documents": len({chunk.source_id for chunk in policies.chunks}),
+            "chunks": len(policies.chunks),
+            "path": "knowledge-base",
+        }
+
+    @app.post("/knowledge/reload", tags=["knowledge"])
+    async def reload_knowledge(
+        actor_id: Annotated[int | None, Header(alias="X-Actor-ID")] = None,
+    ) -> dict[str, object]:
+        if actor_id is None:
+            raise HTTPException(401, "X-Actor-ID header is required")
+        await require_admin_actor(actor_id)
+        return {"status": "reloaded", **policies.reload()}
 
     @app.get("/preferences", tags=["privacy"])
     async def get_preferences(
@@ -331,61 +366,103 @@ def create_app(
             return f"event: {name}\ndata: {serialized}\n\n"
 
         async def generate():
-            plan = None
-            yield event(
-                "status",
-                {"stage": "planning", "message": "Understanding request"},
-            )
-            async for update in graph.astream(
-                {
-                    "message": body.message,
-                    "actor_id": actor_id,
-                    "planner_context": planner_context,
-                },
-                stream_mode="updates",
-            ):
-                if "plan" in update:
-                    plan = update["plan"]["plan"]
-                    yield event(
+            queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
+
+            async def produce() -> None:
+                plan = None
+                sink_token = set_stream_sink(
+                    lambda delta: queue.put(("delta", {"text": delta}))
+                )
+                await queue.put(
+                    (
                         "status",
+                        {"stage": "planning", "message": "Understanding request"},
+                    )
+                )
+                try:
+                    async for update in graph.astream(
                         {
-                            "stage": "executing",
-                            "message": "Running authorized tools",
-                            "intent": plan.intent,
+                            "message": body.message,
+                            "actor_id": actor_id,
+                            "planner_context": planner_context,
                         },
-                    )
-                if "execute" in update:
-                    result = update["execute"]["result"]
-                    for tool in result.tool_events:
-                        yield event(
-                            "tool",
-                            {"name": tool.name, "status": tool.status},
+                        stream_mode="updates",
+                    ):
+                        if "plan" in update:
+                            plan = update["plan"]["plan"]
+                            await queue.put(
+                                (
+                                    "status",
+                                    {
+                                        "stage": "executing",
+                                        "message": "Running authorized tools",
+                                        "intent": plan.intent,
+                                    },
+                                )
+                            )
+                        if "execute" in update:
+                            result = update["execute"]["result"]
+                            for tool in result.tool_events:
+                                await queue.put(
+                                    (
+                                        "tool",
+                                        {"name": tool.name, "status": tool.status},
+                                    )
+                                )
+                            await queue.put(
+                                (
+                                    "status",
+                                    {
+                                        "stage": "composing",
+                                        "message": "Grounding answer",
+                                    },
+                                )
+                            )
+                        if "compose" in update:
+                            if plan is None:
+                                raise RuntimeError(
+                                    "Agent stream completed without a plan"
+                                )
+                            metrics.observe_chat(plan.intent)
+                            response = update["compose"]["response"].model_copy(
+                                update={
+                                    "session_id": session.session_id,
+                                    "context": summarize_context(planner_context),
+                                }
+                            )
+                            await memory.append(
+                                session.session_id,
+                                actor_id,
+                                user_message=body.message,
+                                assistant_message=response.message,
+                                plan=plan,
+                            )
+                            await queue.put(
+                                ("result", response.model_dump(mode="json"))
+                            )
+                    await queue.put(("done", {"ok": True}))
+                except Exception as exc:
+                    await queue.put(
+                        (
+                            "error",
+                            {
+                                "detail": "Agent stream failed",
+                                "type": type(exc).__name__,
+                            },
                         )
-                    yield event(
-                        "status",
-                        {"stage": "composing", "message": "Grounding answer"},
                     )
-                if "compose" in update:
-                    if plan is None:
-                        raise RuntimeError("Agent stream completed without a plan")
-                    metrics.observe_chat(plan.intent)
-                    response = update["compose"]["response"].model_copy(
-                        update={
-                            "session_id": session.session_id,
-                            "context": summarize_context(planner_context),
-                        }
-                    )
-                    await memory.append(
-                        session.session_id,
-                        actor_id,
-                        user_message=body.message,
-                        assistant_message=response.message,
-                        plan=plan,
-                    )
-                    yield event(
-                        "result", response.model_dump(mode="json")
-                    )
-                    yield event("done", {"ok": True})
+                finally:
+                    reset_stream_sink(sink_token)
+
+            producer = asyncio.create_task(produce())
+            try:
+                while True:
+                    name, payload = await queue.get()
+                    yield event(name, payload)
+                    if name in {"done", "error"}:
+                        break
+            finally:
+                await producer
 
         return StreamingResponse(
             generate(),

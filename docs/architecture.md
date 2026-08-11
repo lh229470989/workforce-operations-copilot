@@ -27,8 +27,9 @@ role from SQLite and applies record-level authorization.
 2. **Short conversation context** is SQLite-backed, actor-bound, capped at 10
    turns, and expires after 30 minutes by default.
 3. **Persistent preferences** are limited to history enablement, response
-   language, and a currently visible preferred project. Updates and deletion
-   use dry-run plus explicit confirmation.
+   language, a currently visible preferred project, response detail, and
+   default report format. Updates and deletion use dry-run plus explicit
+   confirmation. They never grant access or complete write fields.
 
 Conversation context may fill omitted filters for read-only follow-ups. It
 never fills missing fields for a single/batch draft, approval decision, or
@@ -102,5 +103,9 @@ confirmation token, and are not treated as authorization to write.
 Approval proposals name one exact time entry and one explicit decision. The
 Core API validates manager/admin scope and submitted state at dry-run time and
 again after the user separately confirms the actor-bound token.
+
+Draft editing, deletion, submission, withdrawal, and batch approval use the
+same boundary. Ownership, role, membership, and current status are validated
+again when the single-use token is consumed.
 
 The AI API must enforce role-aware filtering server-side. The browser is never the authorization boundary.

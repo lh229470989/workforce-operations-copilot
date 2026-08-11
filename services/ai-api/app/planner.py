@@ -331,6 +331,40 @@ class LocalPlanner:
         )
         entry_status = _entry_status(text, lowered)
 
+        lifecycle_match = re.search(
+            r"(?:time\s*entry|entry|record|工时记录|记录)\s*#?\s*(\d+)",
+            lowered,
+        ) or re.search(r"(?:编号|id)\s*#?\s*(\d+)", lowered)
+        lifecycle_action = next(
+            (
+                action
+                for action, markers in (
+                    ("submit", ("submit", "提交")),
+                    ("withdraw", ("withdraw", "撤回")),
+                    ("delete", ("delete", "remove", "删除")),
+                    ("update", ("edit", "update", "修改", "编辑")),
+                )
+                if any(marker in lowered for marker in markers)
+            ),
+            None,
+        )
+        if lifecycle_match and lifecycle_action:
+            hours_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|小时)", lowered)
+            description_match = re.search(
+                r"(?:description|描述|备注)(?:\s*(?:is|是|为|[:：]))?\s*(.+)$",
+                text,
+                re.IGNORECASE,
+            )
+            return AgentPlan(
+                intent="manage_time_entry",
+                time_entry_id=int(lifecycle_match.group(1)),
+                lifecycle_action=lifecycle_action,
+                project_name=project_name if lifecycle_action == "update" else None,
+                work_date=dates[0] if lifecycle_action == "update" and dates else None,
+                hours=Decimal(hours_match.group(1)) if hours_match else None,
+                description=description_match.group(1).strip() if description_match else None,
+            )
+
         # The local planner is an offline fallback, so exact social phrases are
         # handled here without pretending to provide open-ended model chat.
         normalized = re.sub(r"[\s!！,.，。?？]+", "", lowered)
@@ -509,6 +543,24 @@ class LocalPlanner:
             )
         ):
             return AgentPlan(intent="policy_question")
+
+        batch_approval = re.search(
+            r"(?:entries|records|记录)\s*#?\s*((?:\d+\s*[,，、]\s*)+\d+)",
+            lowered,
+        )
+        batch_decision = (
+            "rejected"
+            if any(word in lowered for word in ("reject", "拒绝", "驳回"))
+            else "approved"
+            if any(word in lowered for word in ("approve", "批准", "通过"))
+            else None
+        )
+        if batch_approval and batch_decision:
+            return AgentPlan(
+                intent="decide_time_entries",
+                time_entry_ids=[int(value) for value in re.findall(r"\d+", batch_approval.group(1))],
+                approval_decision=batch_decision,
+            )
 
         entry_id, decision, comment = _parse_approval_action(text)
         if entry_id is not None and decision is not None:
@@ -716,7 +768,9 @@ class OpenAIPlanner:
         local_guard_plan = await LocalPlanner().plan(
             message, today, actor_id, context
         )
-        if local_guard_plan.intent == "safe_sql_analysis":
+        if local_guard_plan.intent in {"manage_time_entry", "decide_time_entries"}:
+            parsed_plan = local_guard_plan
+        elif local_guard_plan.intent == "safe_sql_analysis":
             parsed_plan = local_guard_plan
         elif parsed_plan.intent == "safe_sql_analysis":
             # A provider-only analytics classification is not enough to

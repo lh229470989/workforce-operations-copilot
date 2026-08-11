@@ -92,6 +92,11 @@ dry-run validates every item before issuing one confirmation token. Confirmation
 rechecks authorization and creates all entries in one transaction, so a failed
 item cannot leave a partially written batch.
 
+The lifecycle API also supports dry-run update, delete, submit, withdraw, and
+atomic batch approval. `GET /reports/time-entries.csv` reuses the list filters
+and role scope. `/audit-events` and `/audit-events/stats` are admin-only and
+omit payload details by default.
+
 ## Tests
 
 ```bash

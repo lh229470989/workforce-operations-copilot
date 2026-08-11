@@ -93,10 +93,21 @@ class PolicyKnowledgeBase:
         self.root = root
         self.minimum_score = minimum_score
         self.minimum_coverage = minimum_coverage
-        self.chunks = self._load_chunks(root)
-        self._document_frequency = Counter(
-            token for chunk in self.chunks for token in chunk.tokens
-        )
+        self.chunks: list[PolicyChunk] = []
+        self._document_frequency: Counter[str] = Counter()
+        self.reload()
+
+    def reload(self) -> dict[str, int]:
+        """Atomically rebuild the in-process index from authored Markdown."""
+
+        chunks = self._load_chunks(self.root)
+        frequencies = Counter(token for chunk in chunks for token in chunk.tokens)
+        self.chunks = chunks
+        self._document_frequency = frequencies
+        return {
+            "documents": len({chunk.source_id for chunk in chunks}),
+            "chunks": len(chunks),
+        }
 
     def search(self, query: str, *, limit: int = 3) -> RetrievalResult | None:
         """Retrieve policy sections and compose an extractive grounded answer."""

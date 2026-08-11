@@ -31,6 +31,8 @@ class PreferenceUpdateRequest(BaseModel):
     preferred_language: Literal["auto", "en", "zh"] | None = None
     preferred_project_id: int | None = Field(default=None, ge=1)
     clear_preferred_project: bool = False
+    response_detail: Literal["concise", "standard", "detailed"] | None = None
+    report_format: Literal["summary", "csv"] | None = None
 
     @model_validator(mode="after")
     def require_one_change(self):
@@ -39,6 +41,8 @@ class PreferenceUpdateRequest(BaseModel):
             and self.preferred_language is None
             and self.preferred_project_id is None
             and not self.clear_preferred_project
+            and self.response_detail is None
+            and self.report_format is None
         ):
             raise ValueError("At least one preference change is required")
         return self
@@ -104,6 +108,8 @@ class AgentPlan(BaseModel):
         "draft_time_entry",
         "draft_time_entries_batch",
         "decide_time_entry",
+        "decide_time_entries",
+        "manage_time_entry",
         "greeting",
         "general_chat",
         "capabilities",
@@ -130,8 +136,10 @@ class AgentPlan(BaseModel):
     hours: Decimal | None = Field(default=None, gt=0, le=24)
     description: str | None = Field(default=None, max_length=500)
     time_entry_id: int | None = Field(default=None, ge=1)
+    time_entry_ids: list[int] = Field(default_factory=list, max_length=20)
     approval_decision: Literal["approved", "rejected"] | None = None
     approval_comment: str | None = Field(default=None, max_length=500)
+    lifecycle_action: Literal["update", "delete", "submit", "withdraw"] | None = None
     batch_entries: list[TimeEntryDraftItem] = Field(
         default_factory=list, max_length=10
     )
@@ -139,6 +147,22 @@ class AgentPlan(BaseModel):
         default_factory=list, min_length=0, max_length=4
     )
     analytics_query: AnalyticsQuerySpec | None = None
+
+    @field_validator("inherit_fields", "time_entry_ids", mode="before")
+    @classmethod
+    def normalize_empty_lists(cls, value: Any) -> Any:
+        """Normalize provider-specific empty renderings for optional lists."""
+
+        return [] if value in ({}, "", None) else value
+
+    @field_validator(
+        "approval_decision", "lifecycle_action", mode="before"
+    )
+    @classmethod
+    def normalize_empty_optional_literals(cls, value: Any) -> Any:
+        """DashScope may render an unused optional enum as an empty string."""
+
+        return None if value in ({}, "", None) else value
 
     @field_validator("field_resolutions", mode="before")
     @classmethod

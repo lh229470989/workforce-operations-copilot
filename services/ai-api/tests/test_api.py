@@ -480,6 +480,8 @@ def test_stream_emits_stage_tool_and_final_response_without_token_leak(
     assert "event: tool" in body
     assert '"name": "get_current_actor"' in body
     assert '"stage": "composing"' in body
+    assert "event: delta" in body
+    assert "Jamie Rivera" in body.split("event: result", maxsplit=1)[0]
     assert "event: result" in body
     assert "event: done" in body
 
@@ -634,3 +636,51 @@ def test_safe_sql_agent_refuses_user_supplied_sql_text(client):
     assert "cannot accept or generate raw SQL" in body["message"]
     assert body["tool_events"] == []
     assert body["confirmation"] is None
+
+
+def test_lifecycle_write_is_only_a_confirmation_proposal(client):
+    response = client.post(
+        "/chat",
+        headers={"X-Actor-ID": "3"},
+        json={"message": "Submit time entry 2"},
+    )
+    body = response.json()
+    assert response.status_code == 200
+    assert body["confirmation"]["action"] == "transition_time_entry"
+    assert body["tool_events"][0]["name"] == "dry_run_time_entry_submit"
+
+
+def test_batch_approval_is_one_atomic_proposal(client):
+    response = client.post(
+        "/chat", headers={"X-Actor-ID": "2"},
+        json={"message": "Approve time entries 2, 3"},
+    )
+    body = response.json()
+    assert response.status_code == 200
+    assert body["confirmation"]["action"] == "decide_time_entries"
+    assert body["confirmation"]["preview"]["count"] == 2
+
+
+def test_admin_can_reload_knowledge_but_employee_cannot(client):
+    denied = client.post("/knowledge/reload", headers={"X-Actor-ID": "3"})
+    allowed = client.post("/knowledge/reload", headers={"X-Actor-ID": "1"})
+    assert denied.status_code == 403
+    assert allowed.status_code == 200
+    assert allowed.json()["documents"] >= 6
+
+
+def test_structured_long_term_preferences_round_trip(client):
+    preview = client.post(
+        "/preferences/dry-run",
+        headers={"X-Actor-ID": "3"},
+        json={"response_detail": "detailed", "report_format": "csv"},
+    ).json()
+    confirmed = client.post(
+        f"/preferences/actions/{preview['confirmation_token']}/confirm",
+        headers={"X-Actor-ID": "3"},
+        json={"confirm": True},
+    )
+    assert confirmed.status_code == 200
+    preferences = client.get("/preferences", headers={"X-Actor-ID": "3"}).json()
+    assert preferences["response_detail"] == "detailed"
+    assert preferences["report_format"] == "csv"

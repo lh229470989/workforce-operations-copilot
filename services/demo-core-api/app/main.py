@@ -29,6 +29,7 @@ from .models import (
 )
 from .schemas import (
     ApprovalDryRunRequest,
+    ApprovalBatchDryRunRequest,
     ApprovalOut,
     ConfirmationRequest,
     ConfirmationResponse,
@@ -43,6 +44,7 @@ from .schemas import (
     SummaryStat,
     TimeEntryBatchDraftRequest,
     TimeEntryDraftRequest,
+    TimeEntryUpdateRequest,
     TimeEntryOut,
     TimeEntrySuggestionOut,
 )
@@ -122,6 +124,26 @@ def _prepare_time_entry_preview(
         "status": "draft",
     }
     return payload, preview
+
+
+def _require_entry_owner_or_admin(actor: Employee, entry: TimeEntry) -> None:
+    """Protect employee-owned lifecycle changes at the Core API boundary."""
+
+    if actor.role != "admin" and entry.employee_id != actor.id:
+        raise HTTPException(403, "Only the owner or an admin may change this entry")
+
+
+def _require_approval_scope(actor: Employee, entry: TimeEntry) -> None:
+    """Apply the same manager/admin rules to single and batch decisions."""
+
+    if actor.role not in {"manager", "admin"}:
+        raise HTTPException(403, "Approval role required")
+    if actor.role == "manager" and entry.employee.manager_id != actor.id:
+        raise HTTPException(403, "Managers may approve direct reports only")
+    if entry.employee_id == actor.id:
+        raise HTTPException(403, "Self-approval is not allowed")
+    if entry.status != "submitted":
+        raise HTTPException(409, "Only submitted entries can be decided")
 
 
 def _weekly_report_data(
@@ -372,6 +394,139 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    @app.get("/reports/time-entries.csv", tags=["reports"])
+    def time_entries_csv(
+        session: SessionDep,
+        actor: ActorDep,
+        employee_id: int | None = None,
+        project_id: int | None = None,
+        entry_status: str | None = Query(default=None, alias="status"),
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> Response:
+        """Export exactly the same role-scoped filters as the list endpoint."""
+
+        if start_date and end_date and start_date > end_date:
+            raise HTTPException(422, "start_date must not be after end_date")
+        entries = list_time_entries(
+            session,
+            actor,
+            employee_id,
+            project_id,
+            entry_status,
+            start_date,
+            end_date,
+        )
+        output = StringIO()
+        fieldnames = [
+            "entry_id",
+            "employee_id",
+            "employee_name",
+            "project_id",
+            "project_name",
+            "work_date",
+            "hours",
+            "status",
+            "description",
+        ]
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(
+            {
+                "entry_id": entry.id,
+                "employee_id": entry.employee_id,
+                "employee_name": entry.employee.name,
+                "project_id": entry.project_id,
+                "project_name": entry.project.name,
+                "work_date": entry.work_date.isoformat(),
+                "hours": str(entry.hours),
+                "status": entry.status,
+                "description": entry.description,
+            }
+            for entry in entries
+        )
+        filename = f"acmeworks-time-entries-{start_date or 'all'}-{end_date or 'all'}.csv"
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/audit-events", tags=["audit"])
+    def audit_events(
+        session: SessionDep,
+        actor: ActorDep,
+        action: str | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100),
+        include_details: bool = False,
+    ) -> dict:
+        """Return admin-only, metadata-first audit history."""
+
+        if actor.role != "admin":
+            raise HTTPException(403, "Admin role required")
+        filters = []
+        if action:
+            filters.append(AuditEvent.action == action)
+        if start_time:
+            filters.append(AuditEvent.created_at >= start_time)
+        if end_time:
+            filters.append(AuditEvent.created_at <= end_time)
+        total = session.scalar(select(func.count(AuditEvent.id)).where(*filters)) or 0
+        rows = list(
+            session.scalars(
+                select(AuditEvent)
+                .where(*filters)
+                .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        return {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "items": [
+                {
+                    "id": row.id,
+                    "actor_id": row.actor_id,
+                    "action": row.action,
+                    "resource_type": row.resource_type,
+                    "resource_id": row.resource_id,
+                    "created_at": row.created_at,
+                    **(
+                        {"details": json.loads(row.details)}
+                        if include_details
+                        else {}
+                    ),
+                }
+                for row in rows
+            ],
+        }
+
+    @app.get("/audit-events/stats", tags=["audit"])
+    def audit_event_stats(session: SessionDep, actor: ActorDep) -> dict:
+        if actor.role != "admin":
+            raise HTTPException(403, "Admin role required")
+        total = session.scalar(select(func.count(AuditEvent.id))) or 0
+        by_action = session.execute(
+            select(AuditEvent.action, func.count(AuditEvent.id))
+            .group_by(AuditEvent.action)
+            .order_by(AuditEvent.action)
+        )
+        by_actor = session.execute(
+            select(AuditEvent.actor_id, func.count(AuditEvent.id))
+            .group_by(AuditEvent.actor_id)
+            .order_by(AuditEvent.actor_id)
+        )
+        return {
+            "total": total,
+            "by_action": {row[0]: row[1] for row in by_action},
+            "by_actor": {str(row[0]): row[1] for row in by_actor},
+        }
 
     @app.post("/analytics/query", tags=["analytics"])
     def safe_analytics_query(
@@ -627,6 +782,145 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
             expires_at=action.expires_at,
         )
 
+    @app.patch(
+        "/time-entries/{entry_id}/dry-run",
+        response_model=DryRunResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["writes"],
+    )
+    def dry_run_time_entry_update(
+        entry_id: int,
+        body: TimeEntryUpdateRequest,
+        session: SessionDep,
+        actor: ActorDep,
+    ) -> DryRunResponse:
+        entry = session.get(TimeEntry, entry_id)
+        if entry is None:
+            raise HTTPException(404, "Time entry not found")
+        _require_entry_owner_or_admin(actor, entry)
+        if entry.status != "draft":
+            raise HTTPException(409, "Only draft entries can be edited")
+        changes = body.model_dump(mode="json", exclude_unset=True)
+        project_id = changes.get("project_id", entry.project_id)
+        membership = session.scalar(
+            select(ProjectMember).where(
+                ProjectMember.employee_id == entry.employee_id,
+                ProjectMember.project_id == project_id,
+            )
+        )
+        project = session.get(Project, project_id)
+        if project is None or membership is None:
+            raise HTTPException(422, "Employee is not a member of the project")
+        payload = {
+            "entry_id": entry.id,
+            "expected_status": entry.status,
+            "changes": changes,
+        }
+        preview = {
+            "before": TimeEntryOut.model_validate(entry).model_dump(mode="json"),
+            "after": {
+                **TimeEntryOut.model_validate(entry).model_dump(mode="json"),
+                **changes,
+                "project_name": project.name,
+            },
+        }
+        action = _pending_action(session, actor, "update_time_entry", payload)
+        return DryRunResponse(
+            action="update_time_entry",
+            preview=_serialize_preview(preview),
+            confirmation_token=action.token,
+            expires_at=action.expires_at,
+        )
+
+    @app.delete(
+        "/time-entries/{entry_id}/dry-run",
+        response_model=DryRunResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["writes"],
+    )
+    def dry_run_time_entry_delete(
+        entry_id: int, session: SessionDep, actor: ActorDep
+    ) -> DryRunResponse:
+        entry = session.get(TimeEntry, entry_id)
+        if entry is None:
+            raise HTTPException(404, "Time entry not found")
+        _require_entry_owner_or_admin(actor, entry)
+        if entry.status != "draft":
+            raise HTTPException(409, "Only draft entries can be deleted")
+        payload = {"entry_id": entry.id, "expected_status": entry.status}
+        action = _pending_action(session, actor, "delete_time_entry", payload)
+        return DryRunResponse(
+            action="delete_time_entry",
+            preview=_serialize_preview(
+                TimeEntryOut.model_validate(entry).model_dump(mode="json")
+            ),
+            confirmation_token=action.token,
+            expires_at=action.expires_at,
+        )
+
+    def prepare_status_transition(
+        entry_id: int,
+        target_status: str,
+        expected_status: str,
+        session: Session,
+        actor: Employee,
+    ) -> DryRunResponse:
+        entry = session.get(TimeEntry, entry_id)
+        if entry is None:
+            raise HTTPException(404, "Time entry not found")
+        _require_entry_owner_or_admin(actor, entry)
+        if entry.status != expected_status:
+            raise HTTPException(
+                409, f"Only {expected_status} entries can move to {target_status}"
+            )
+        payload = {
+            "entry_id": entry.id,
+            "expected_status": expected_status,
+            "target_status": target_status,
+        }
+        action = _pending_action(session, actor, "transition_time_entry", payload)
+        return DryRunResponse(
+            action="transition_time_entry",
+            preview=_serialize_preview(
+                {
+                    "entry_id": entry.id,
+                    "from_status": expected_status,
+                    "to_status": target_status,
+                    "project_name": entry.project.name,
+                    "work_date": entry.work_date,
+                    "hours": entry.hours,
+                }
+            ),
+            confirmation_token=action.token,
+            expires_at=action.expires_at,
+        )
+
+    @app.post(
+        "/time-entries/{entry_id}/submit/dry-run",
+        response_model=DryRunResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["writes"],
+    )
+    def dry_run_time_entry_submit(
+        entry_id: int, session: SessionDep, actor: ActorDep
+    ) -> DryRunResponse:
+        return prepare_status_transition(
+            entry_id, "submitted", "draft", session, actor
+        )
+
+    @app.post(
+        "/time-entries/{entry_id}/withdraw/dry-run",
+        response_model=DryRunResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["writes"],
+    )
+    def dry_run_time_entry_withdraw(
+        entry_id: int, session: SessionDep, actor: ActorDep
+    ) -> DryRunResponse:
+        return prepare_status_transition(
+            entry_id, "draft", "submitted", session, actor
+        )
+
     @app.post(
         "/time-entries/{entry_id}/approval/dry-run",
         response_model=DryRunResponse,
@@ -642,18 +936,7 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
         entry = session.get(TimeEntry, entry_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Time entry not found")
-        if actor.role not in {"manager", "admin"}:
-            raise HTTPException(status_code=403, detail="Approval role required")
-        if actor.role == "manager" and entry.employee.manager_id != actor.id:
-            raise HTTPException(
-                status_code=403, detail="Managers may approve direct reports only"
-            )
-        if entry.employee_id == actor.id:
-            raise HTTPException(status_code=403, detail="Self-approval is not allowed")
-        if entry.status != "submitted":
-            raise HTTPException(
-                status_code=409, detail="Only submitted entries can be decided"
-            )
+        _require_approval_scope(actor, entry)
         payload = {
             "entry_id": entry.id,
             "decision": body.decision,
@@ -670,6 +953,53 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
         return DryRunResponse(
             action="decide_time_entry",
             preview=_serialize_preview(preview),
+            confirmation_token=action.token,
+            expires_at=action.expires_at,
+        )
+
+    @app.post(
+        "/time-entries/approvals/batch/dry-run",
+        response_model=DryRunResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["writes"],
+    )
+    def dry_run_approval_batch(
+        body: ApprovalBatchDryRunRequest,
+        session: SessionDep,
+        actor: ActorDep,
+    ) -> DryRunResponse:
+        entries: list[TimeEntry] = []
+        for entry_id in body.entry_ids:
+            entry = session.get(TimeEntry, entry_id)
+            if entry is None:
+                raise HTTPException(404, f"Time entry {entry_id} not found")
+            _require_approval_scope(actor, entry)
+            entries.append(entry)
+        payload = {
+            "entry_ids": body.entry_ids,
+            "decision": body.decision,
+            "comment": body.comment,
+        }
+        action = _pending_action(session, actor, "decide_time_entries", payload)
+        return DryRunResponse(
+            action="decide_time_entries",
+            preview=_serialize_preview(
+                {
+                    "count": len(entries),
+                    "decision": body.decision,
+                    "comment": body.comment,
+                    "entries": [
+                        {
+                            "entry_id": entry.id,
+                            "employee_name": entry.employee.name,
+                            "project_name": entry.project.name,
+                            "work_date": entry.work_date,
+                            "hours": entry.hours,
+                        }
+                        for entry in entries
+                    ],
+                }
+            ),
             confirmation_token=action.token,
             expires_at=action.expires_at,
         )
@@ -799,6 +1129,56 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
                 ],
             }
             resource_id = f"batch:{len(created_entries)}"
+        elif action.action_type == "update_time_entry":
+            entry = session.get(TimeEntry, payload["entry_id"])
+            if entry is None:
+                raise HTTPException(404, "Time entry not found")
+            _require_entry_owner_or_admin(actor, entry)
+            if entry.status != payload["expected_status"]:
+                raise HTTPException(409, "Time entry status changed after preview")
+            changes = payload["changes"]
+            project_id = changes.get("project_id", entry.project_id)
+            membership = session.scalar(
+                select(ProjectMember).where(
+                    ProjectMember.employee_id == entry.employee_id,
+                    ProjectMember.project_id == project_id,
+                )
+            )
+            if session.get(Project, project_id) is None or membership is None:
+                raise HTTPException(409, "Project membership changed after preview")
+            if "project_id" in changes:
+                entry.project_id = int(changes["project_id"])
+            if "work_date" in changes:
+                entry.work_date = date.fromisoformat(changes["work_date"])
+            if "hours" in changes:
+                entry.hours = Decimal(changes["hours"])
+            if "description" in changes:
+                entry.description = changes["description"]
+            session.flush()
+            result = TimeEntryOut.model_validate(entry).model_dump(mode="json")
+            resource_id = str(entry.id)
+        elif action.action_type == "delete_time_entry":
+            entry = session.get(TimeEntry, payload["entry_id"])
+            if entry is None:
+                raise HTTPException(404, "Time entry not found")
+            _require_entry_owner_or_admin(actor, entry)
+            if entry.status != payload["expected_status"]:
+                raise HTTPException(409, "Time entry status changed after preview")
+            resource_id = str(entry.id)
+            result = {"entry_id": entry.id, "deleted": True}
+            session.delete(entry)
+            session.flush()
+        elif action.action_type == "transition_time_entry":
+            entry = session.get(TimeEntry, payload["entry_id"])
+            if entry is None:
+                raise HTTPException(404, "Time entry not found")
+            _require_entry_owner_or_admin(actor, entry)
+            if entry.status != payload["expected_status"]:
+                raise HTTPException(409, "Time entry status changed after preview")
+            entry.status = payload["target_status"]
+            session.flush()
+            result = TimeEntryOut.model_validate(entry).model_dump(mode="json")
+            resource_id = str(entry.id)
         elif action.action_type == "decide_time_entry":
             entry = session.get(TimeEntry, payload["entry_id"])
             if entry is None:
@@ -834,6 +1214,35 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
                 "approval": ApprovalOut.model_validate(approval).model_dump(mode="json"),
             }
             resource_id = str(entry.id)
+        elif action.action_type == "decide_time_entries":
+            entries: list[TimeEntry] = []
+            for entry_id in payload["entry_ids"]:
+                entry = session.get(TimeEntry, entry_id)
+                if entry is None:
+                    raise HTTPException(404, f"Time entry {entry_id} not found")
+                _require_approval_scope(actor, entry)
+                entries.append(entry)
+            approvals: list[Approval] = []
+            for entry in entries:
+                entry.status = payload["decision"]
+                approval = Approval(
+                    time_entry_id=entry.id,
+                    actor_id=actor.id,
+                    decision=payload["decision"],
+                    comment=payload.get("comment"),
+                )
+                session.add(approval)
+                approvals.append(approval)
+            session.flush()
+            result = {
+                "count": len(entries),
+                "time_entries": [
+                    TimeEntryOut.model_validate(entry).model_dump(mode="json")
+                    for entry in entries
+                ],
+                "approval_ids": [approval.id for approval in approvals],
+            }
+            resource_id = f"batch:{','.join(str(entry.id) for entry in entries)}"
         else:
             raise HTTPException(status_code=409, detail="Unsupported pending action")
 

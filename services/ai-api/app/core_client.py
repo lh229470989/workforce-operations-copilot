@@ -134,6 +134,36 @@ class CoreAPIClient:
             json=payload,
         )
 
+    async def dry_run_approval_batch(
+        self, actor_id: int, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/time-entries/approvals/batch/dry-run",
+            actor_id=actor_id,
+            json=payload,
+        )
+
+    async def dry_run_time_entry_lifecycle(
+        self,
+        actor_id: int,
+        time_entry_id: int,
+        action: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        method, suffix = {
+            "update": ("PATCH", "dry-run"),
+            "delete": ("DELETE", "dry-run"),
+            "submit": ("POST", "submit/dry-run"),
+            "withdraw": ("POST", "withdraw/dry-run"),
+        }[action]
+        return await self._request(
+            method,
+            f"/time-entries/{time_entry_id}/{suffix}",
+            actor_id=actor_id,
+            **({"json": payload} if payload is not None else {}),
+        )
+
     async def _request(
         self,
         method: str,
