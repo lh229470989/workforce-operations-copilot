@@ -1,5 +1,20 @@
 import { expect, test } from "@playwright/test";
 
+for (const viewport of [
+  { name: "desktop", width: 1280, height: 720 },
+  { name: "mobile", width: 390, height: 844 },
+]) {
+  test(`keeps the welcome title and demo entry points visible on ${viewport.name}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/");
+
+    await expect(page.getByRole("heading", { name: "What would you like to know?" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /How many hours did I log/i })).toBeVisible();
+    await expect(page.getByLabel("Message Acme Copilot")).toBeVisible();
+    await expect(page.evaluate(() => window.scrollY)).resolves.toBe(0);
+  });
+}
+
 test("streams a role-scoped answer and renders a report download card", async ({ page }) => {
   await page.goto("/");
   await page.getByPlaceholder(/Ask about/i).fill("Download my submitted time entries as CSV");

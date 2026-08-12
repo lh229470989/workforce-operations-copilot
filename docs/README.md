@@ -12,6 +12,8 @@
 5. [可观测性](observability.md)：查看日志、指标和隐私约束。
 6. [评估方法](evaluation.md)：查看回归用例与 Agent 行为评估。
 7. [本地运行与调试](local-development.md)：查看 Docker、热更新和日志调试方式。
+8. [SMB AI 自动化作品集路线图](portfolio-roadmap.md)：查看后续作品集、真实集成和交付能力建设计划。
+9. [作品集演示材料](portfolio-demo.md)：查看 60–90 秒视频脚本、截图清单和 Upwork 文案。
 
 ## 快速定位
 
@@ -25,6 +27,7 @@
 | 当前系统距离生产环境还缺什么？ | [系统总览](system-overview.md#当前限制) |
 | 高级 RAG 和安全 SQL 为什么这样设计？ | [高级 RAG 与安全 SQL 分析](advanced-rag-and-safe-sql.md) |
 | 如何在 Docker 与本地热更新之间切换？ | [本地运行与调试](local-development.md) |
+| 下一阶段为什么转向 SMB AI 自动化，准备如何执行？ | [SMB AI 自动化作品集路线图](portfolio-roadmap.md) |
 
 ## 代码入口
 
