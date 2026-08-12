@@ -1,7 +1,9 @@
 # Evaluation
 
-The publishable evaluation set is
-`services/ai-api/evals/cases.jsonl`. It covers:
+The publishable deterministic set is `services/ai-api/evals/cases.jsonl`, with
+a broader 120-case benchmark in `services/ai-api/evals/benchmark_cases.jsonl`.
+The benchmark is split across role scope, analytics, RAG, write safety,
+security, and conversation. It covers:
 
 - English and Chinese role-scoped reads;
 - date, project, status, and limit parsing;
@@ -25,5 +27,15 @@ pytest tests/test_evaluation_cases.py
 pytest
 ```
 
-The evaluation set is intentionally small and deterministic. It is a
-regression and safety gate, not a claim of broad natural-language accuracy.
+Run the metrics reporter against a live stack:
+
+```bash
+python services/ai-api/scripts/run_agent_eval.py --base-url http://localhost:8000
+```
+
+The reporter prints total/category pass rates and a bounded failure list. The
+120 cases are authored for this synthetic AcmeWorks project and contain no
+source-project prompts or data.
+
+The deterministic subset is a regression gate and the broader set is a
+repeatable benchmark; neither is a claim of broad natural-language accuracy.

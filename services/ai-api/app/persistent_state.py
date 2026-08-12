@@ -55,6 +55,39 @@ class PersistentStateStore:
                     expires_at REAL NOT NULL,
                     consumed_at REAL
                 );
+                CREATE TABLE IF NOT EXISTS memories (
+                    id TEXT PRIMARY KEY,
+                    actor_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS memories_actor_idx
+                    ON memories(actor_id, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS memory_actions (
+                    token TEXT PRIMARY KEY,
+                    actor_id INTEGER NOT NULL,
+                    action_type TEXT NOT NULL,
+                    memory_id TEXT,
+                    payload_json TEXT NOT NULL,
+                    expires_at REAL NOT NULL,
+                    consumed_at REAL
+                );
+                CREATE TABLE IF NOT EXISTS agent_audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    request_id TEXT NOT NULL,
+                    actor_role TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    intent TEXT NOT NULL,
+                    tool_names_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    authorization_outcome TEXT NOT NULL,
+                    latency_ms REAL NOT NULL,
+                    created_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS agent_audit_created_idx
+                    ON agent_audit(created_at DESC);
                 """
             )
             columns = {
@@ -87,7 +120,14 @@ class PersistentStateStore:
         actions = db.execute(
             "DELETE FROM preference_actions WHERE expires_at <= ?", (now,)
         ).rowcount
-        return {"sessions": sessions, "preference_actions": actions}
+        memory_actions = db.execute(
+            "DELETE FROM memory_actions WHERE expires_at <= ?", (now,)
+        ).rowcount
+        return {
+            "sessions": sessions,
+            "preference_actions": actions,
+            "memory_actions": memory_actions,
+        }
 
     async def cleanup_expired(self) -> dict[str, int]:
         """Physically purge expired sessions and preference proposals."""
@@ -247,7 +287,9 @@ class PersistentStateStore:
                     "deletes": [
                         "conversation_sessions",
                         "preferences",
+                        "structured_memories",
                         "pending_preference_actions",
+                        "pending_memory_actions",
                     ],
                 },
                 "confirmation_token": token,
@@ -285,6 +327,10 @@ class PersistentStateStore:
                         "DELETE FROM preference_actions WHERE actor_id = ?",
                         (actor_id,),
                     )
+                    db.execute("DELETE FROM memories WHERE actor_id = ?", (actor_id,))
+                    db.execute(
+                        "DELETE FROM memory_actions WHERE actor_id = ?", (actor_id,)
+                    )
                     return {
                         "actor_id": actor_id,
                         "history_enabled": True,
@@ -319,3 +365,183 @@ class PersistentStateStore:
                         "DELETE FROM sessions WHERE actor_id = ?", (actor_id,)
                     )
                 return updated
+
+    async def list_memories(self, actor_id: int) -> list[dict[str, Any]]:
+        """Return only the current actor's explicit, structured memories."""
+
+        async with self._lock:
+            with self._connect() as db:
+                rows = db.execute(
+                    "SELECT id, category, value, created_at, updated_at "
+                    "FROM memories WHERE actor_id = ? ORDER BY updated_at DESC",
+                    (actor_id,),
+                ).fetchall()
+                return [dict(row) for row in rows]
+
+    async def prepare_memory(
+        self,
+        actor_id: int,
+        action_type: str,
+        payload: dict[str, Any],
+        *,
+        memory_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create an actor-bound proposal; no memory changes during dry-run."""
+
+        async with self._lock:
+            token = str(uuid4())
+            expires_at = self.clock() + 15 * 60
+            with self._connect() as db:
+                current = None
+                if memory_id is not None:
+                    row = db.execute(
+                        "SELECT id, category, value FROM memories "
+                        "WHERE id = ? AND actor_id = ?",
+                        (memory_id, actor_id),
+                    ).fetchone()
+                    if row is None:
+                        raise KeyError("Memory not found")
+                    current = dict(row)
+                if action_type == "create":
+                    memory_count = db.execute(
+                        "SELECT COUNT(*) FROM memories WHERE actor_id = ?", (actor_id,)
+                    ).fetchone()[0]
+                    if memory_count >= 20:
+                        raise ValueError("Structured memory limit reached")
+                    preview = payload
+                elif action_type == "update":
+                    preview = {**(current or {}), **payload}
+                elif action_type == "delete":
+                    preview = current or {}
+                else:
+                    raise ValueError("Unsupported memory action")
+                db.execute(
+                    "INSERT INTO memory_actions VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                    (
+                        token,
+                        actor_id,
+                        action_type,
+                        memory_id,
+                        json.dumps(payload),
+                        expires_at,
+                    ),
+                )
+                return {
+                    "action": f"{action_type}_memory",
+                    "preview": preview,
+                    "confirmation_token": token,
+                    "expires_at": expires_at,
+                }
+
+    async def confirm_memory(
+        self, actor_id: int, token: str
+    ) -> dict[str, Any]:
+        """Apply one fresh memory proposal after explicit confirmation."""
+
+        async with self._lock:
+            now = self.clock()
+            with self._connect() as db:
+                action = db.execute(
+                    "SELECT * FROM memory_actions WHERE token = ?", (token,)
+                ).fetchone()
+                if action is None:
+                    raise KeyError("Memory action not found")
+                if action["actor_id"] != actor_id:
+                    raise PermissionError("Memory action belongs to another actor")
+                if action["consumed_at"] is not None:
+                    raise RuntimeError("Memory action already consumed")
+                if action["expires_at"] < now:
+                    raise TimeoutError("Memory action expired")
+                payload = json.loads(action["payload_json"])
+                action_type = action["action_type"]
+                memory_id = action["memory_id"] or str(uuid4())
+                if action_type == "create":
+                    db.execute(
+                        "INSERT INTO memories VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            memory_id,
+                            actor_id,
+                            payload["category"],
+                            payload["value"],
+                            now,
+                            now,
+                        ),
+                    )
+                elif action_type == "update":
+                    existing = db.execute(
+                        "SELECT * FROM memories WHERE id = ? AND actor_id = ?",
+                        (memory_id, actor_id),
+                    ).fetchone()
+                    if existing is None:
+                        raise KeyError("Memory not found")
+                    db.execute(
+                        "UPDATE memories SET category = ?, value = ?, updated_at = ? "
+                        "WHERE id = ? AND actor_id = ?",
+                        (
+                            payload.get("category", existing["category"]),
+                            payload.get("value", existing["value"]),
+                            now,
+                            memory_id,
+                            actor_id,
+                        ),
+                    )
+                elif action_type == "delete":
+                    deleted = db.execute(
+                        "DELETE FROM memories WHERE id = ? AND actor_id = ?",
+                        (memory_id, actor_id),
+                    ).rowcount
+                    if deleted == 0:
+                        raise KeyError("Memory not found")
+                db.execute(
+                    "UPDATE memory_actions SET consumed_at = ? WHERE token = ?",
+                    (now, token),
+                )
+                if action_type == "delete":
+                    return {"id": memory_id, "deleted": True}
+                row = db.execute(
+                    "SELECT id, category, value, created_at, updated_at "
+                    "FROM memories WHERE id = ?",
+                    (memory_id,),
+                ).fetchone()
+                return dict(row)
+
+    async def append_agent_audit(self, record: dict[str, Any]) -> None:
+        """Persist operational metadata, never prompts, answers, or tool payloads."""
+
+        async with self._lock:
+            with self._connect() as db:
+                db.execute(
+                    "INSERT INTO agent_audit "
+                    "(request_id, actor_role, mode, intent, tool_names_json, status, "
+                    "authorization_outcome, latency_ms, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        record["request_id"],
+                        record["actor_role"],
+                        record["mode"],
+                        record["intent"],
+                        json.dumps(record.get("tool_names", [])),
+                        record["status"],
+                        record["authorization_outcome"],
+                        record["latency_ms"],
+                        self.clock(),
+                    ),
+                )
+
+    async def list_agent_audit(self, limit: int = 100) -> list[dict[str, Any]]:
+        async with self._lock:
+            with self._connect() as db:
+                rows = db.execute(
+                    "SELECT * FROM agent_audit ORDER BY id DESC LIMIT ?", (limit,)
+                ).fetchall()
+                return [
+                    {
+                        **{
+                            key: value
+                            for key, value in dict(row).items()
+                            if key != "tool_names_json"
+                        },
+                        "tool_names": json.loads(row["tool_names_json"]),
+                    }
+                    for row in rows
+                ]

@@ -3,10 +3,11 @@ from contextlib import asynccontextmanager, suppress
 from datetime import date, datetime
 import json
 from pathlib import Path
+from time import perf_counter
 from typing import Annotated, Callable
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from .agent import build_agent
@@ -28,6 +29,8 @@ from .persistent_state import PersistentStateStore
 from .schemas import (
     ChatRequest,
     ChatResponse,
+    MemoryCreateRequest,
+    MemoryUpdateRequest,
     PreferenceConfirmRequest,
     PreferenceUpdateRequest,
 )
@@ -148,7 +151,10 @@ def create_app(
 
     async def actor_preferences(actor_id: int) -> dict[str, object]:
         if hasattr(memory, "get_preferences"):
-            return await memory.get_preferences(actor_id)
+            preferences = await memory.get_preferences(actor_id)
+            if hasattr(memory, "list_memories"):
+                preferences["memories"] = await memory.list_memories(actor_id)
+            return preferences
         return {
             "actor_id": actor_id,
             "history_enabled": True,
@@ -156,7 +162,36 @@ def create_app(
             "preferred_project_id": None,
             "response_detail": "standard",
             "report_format": "summary",
+            "memories": [],
         }
+
+    async def record_agent_audit(
+        request_id: str,
+        *,
+        context,
+        intent: str,
+        tool_names: list[str],
+        status: str,
+        started: float,
+    ) -> None:
+        """Write only low-sensitivity execution metadata when persistence exists."""
+
+        if not hasattr(memory, "append_agent_audit"):
+            return
+        await memory.append_agent_audit(
+            {
+                "request_id": request_id,
+                "actor_role": context.actor.get("role", "unknown"),
+                "mode": mode,
+                "intent": intent,
+                "tool_names": tool_names,
+                "status": status,
+                "authorization_outcome": (
+                    "allowed" if status == "completed" else "failed"
+                ),
+                "latency_ms": round((perf_counter() - started) * 1000, 2),
+            }
+        )
 
     async def require_known_actor(actor_id: int) -> None:
         """Validate demo identity through the authoritative Core API."""
@@ -286,9 +321,105 @@ def create_app(
             raise HTTPException(410, str(exc)) from exc
         return {"action": "preferences_confirmed", "result": result}
 
+    @app.get("/memories", tags=["privacy"])
+    async def list_memories(
+        actor_id: Annotated[int | None, Header(alias="X-Actor-ID")] = None,
+    ) -> list[dict[str, object]]:
+        if actor_id is None:
+            raise HTTPException(401, "X-Actor-ID header is required")
+        await require_known_actor(actor_id)
+        if not hasattr(memory, "list_memories"):
+            raise HTTPException(501, "Structured memory is unavailable")
+        return await memory.list_memories(actor_id)
+
+    @app.post("/memories/dry-run", status_code=201, tags=["privacy"])
+    async def dry_run_memory_create(
+        body: MemoryCreateRequest,
+        actor_id: Annotated[int | None, Header(alias="X-Actor-ID")] = None,
+    ) -> dict[str, object]:
+        if actor_id is None:
+            raise HTTPException(401, "X-Actor-ID header is required")
+        await require_known_actor(actor_id)
+        if not hasattr(memory, "prepare_memory"):
+            raise HTTPException(501, "Structured memory is unavailable")
+        try:
+            return await memory.prepare_memory(
+                actor_id, "create", body.model_dump(mode="json")
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.patch("/memories/{memory_id}/dry-run", status_code=201, tags=["privacy"])
+    async def dry_run_memory_update(
+        memory_id: str,
+        body: MemoryUpdateRequest,
+        actor_id: Annotated[int | None, Header(alias="X-Actor-ID")] = None,
+    ) -> dict[str, object]:
+        if actor_id is None:
+            raise HTTPException(401, "X-Actor-ID header is required")
+        await require_known_actor(actor_id)
+        try:
+            return await memory.prepare_memory(
+                actor_id,
+                "update",
+                body.model_dump(exclude_none=True, mode="json"),
+                memory_id=memory_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.delete("/memories/{memory_id}/dry-run", status_code=201, tags=["privacy"])
+    async def dry_run_memory_delete(
+        memory_id: str,
+        actor_id: Annotated[int | None, Header(alias="X-Actor-ID")] = None,
+    ) -> dict[str, object]:
+        if actor_id is None:
+            raise HTTPException(401, "X-Actor-ID header is required")
+        await require_known_actor(actor_id)
+        try:
+            return await memory.prepare_memory(
+                actor_id, "delete", {}, memory_id=memory_id
+            )
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/memories/actions/{token}/confirm", tags=["privacy"])
+    async def confirm_memory_action(
+        token: str,
+        _: PreferenceConfirmRequest,
+        actor_id: Annotated[int | None, Header(alias="X-Actor-ID")] = None,
+    ) -> dict[str, object]:
+        if actor_id is None:
+            raise HTTPException(401, "X-Actor-ID header is required")
+        await require_known_actor(actor_id)
+        try:
+            result = await memory.confirm_memory(actor_id, token)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except TimeoutError as exc:
+            raise HTTPException(410, str(exc)) from exc
+        return {"action": "memory_confirmed", "result": result}
+
+    @app.get("/agent-audit", tags=["admin"])
+    async def agent_audit(
+        limit: int = 100,
+        actor_id: Annotated[int | None, Header(alias="X-Actor-ID")] = None,
+    ) -> list[dict[str, object]]:
+        if actor_id is None:
+            raise HTTPException(401, "X-Actor-ID header is required")
+        await require_admin_actor(actor_id)
+        if not hasattr(memory, "list_agent_audit"):
+            raise HTTPException(501, "Agent audit is unavailable")
+        return await memory.list_agent_audit(min(max(limit, 1), 500))
+
     @app.post("/chat", response_model=ChatResponse, tags=["chat"])
     async def chat(
         body: ChatRequest,
+        request: Request,
         actor_id: Annotated[int | None, Header(alias="X-Actor-ID")] = None,
     ) -> ChatResponse:
         if actor_id is None:
@@ -308,13 +439,25 @@ def create_app(
         planner_context = await build_planner_context(
             core, actor_id, session, await actor_preferences(actor_id)
         )
-        state = await graph.ainvoke(
-            {
-                "message": body.message,
-                "actor_id": actor_id,
-                "planner_context": planner_context,
-            }
-        )
+        started = perf_counter()
+        try:
+            state = await graph.ainvoke(
+                {
+                    "message": body.message,
+                    "actor_id": actor_id,
+                    "planner_context": planner_context,
+                }
+            )
+        except Exception:
+            await record_agent_audit(
+                request.state.request_id,
+                context=planner_context,
+                intent="unresolved",
+                tool_names=[],
+                status="failed",
+                started=started,
+            )
+            raise
         metrics.observe_chat(state["plan"].intent)
         response = state["response"].model_copy(
             update={
@@ -329,11 +472,20 @@ def create_app(
             assistant_message=response.message,
             plan=state["plan"],
         )
+        await record_agent_audit(
+            request.state.request_id,
+            context=planner_context,
+            intent=state["plan"].intent,
+            tool_names=[event.name for event in response.tool_events],
+            status="completed",
+            started=started,
+        )
         return response
 
     @app.post("/chat/stream", tags=["chat"])
     async def chat_stream(
         body: ChatRequest,
+        request: Request,
         actor_id: Annotated[int | None, Header(alias="X-Actor-ID")] = None,
     ) -> StreamingResponse:
         """Stream safe stage metadata, then the normal structured response.
@@ -360,6 +512,8 @@ def create_app(
         planner_context = await build_planner_context(
             core, actor_id, session, await actor_preferences(actor_id)
         )
+        request_id = request.state.request_id
+        started = perf_counter()
 
         def event(name: str, payload: object) -> str:
             serialized = json.dumps(payload, ensure_ascii=False, default=str)
@@ -437,11 +591,27 @@ def create_app(
                                 assistant_message=response.message,
                                 plan=plan,
                             )
+                            await record_agent_audit(
+                                request_id,
+                                context=planner_context,
+                                intent=plan.intent,
+                                tool_names=[event.name for event in response.tool_events],
+                                status="completed",
+                                started=started,
+                            )
                             await queue.put(
                                 ("result", response.model_dump(mode="json"))
                             )
                     await queue.put(("done", {"ok": True}))
                 except Exception as exc:
+                    await record_agent_audit(
+                        request_id,
+                        context=planner_context,
+                        intent=plan.intent if plan is not None else "unresolved",
+                        tool_names=[],
+                        status="failed",
+                        started=started,
+                    )
                     await queue.put(
                         (
                             "error",

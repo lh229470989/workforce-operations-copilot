@@ -52,6 +52,45 @@ class PreferenceConfirmRequest(BaseModel):
     confirm: Literal[True]
 
 
+class MemoryCreateRequest(BaseModel):
+    """A deliberately narrow, non-sensitive fact explicitly supplied by a user."""
+
+    category: Literal[
+        "work_preference",
+        "reporting_preference",
+        "collaboration_preference",
+    ]
+    value: str = Field(min_length=1, max_length=200)
+
+    @field_validator("value")
+    @classmethod
+    def normalize_value(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Memory value cannot be blank")
+        blocked_markers = ("password", "api key", "secret key", "sk-", "身份证", "密码")
+        if any(marker in normalized.casefold() for marker in blocked_markers):
+            raise ValueError("Sensitive credentials or identifiers cannot be stored")
+        return normalized
+
+
+class MemoryUpdateRequest(BaseModel):
+    category: Literal[
+        "work_preference",
+        "reporting_preference",
+        "collaboration_preference",
+    ] | None = None
+    value: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def require_change(self):
+        if self.category is None and self.value is None:
+            raise ValueError("At least one memory change is required")
+        if self.value is not None:
+            self.value = " ".join(self.value.split())
+        return self
+
+
 class TimeEntryDraftItem(BaseModel):
     """One exact item proposed as part of a batch dry-run."""
 
@@ -100,6 +139,7 @@ class AgentPlan(BaseModel):
         "summary",
         "monthly_chart",
         "weekly_report",
+        "export_report",
         "compare_analysis",
         "safe_sql_analysis",
         "pending_team",

@@ -145,3 +145,55 @@ def test_chart_answer_defers_visual_rendering_to_the_web_component():
     )
     assert "```" not in answer
     assert composer._client.responses.calls == []
+
+
+def test_export_answer_never_allows_the_model_to_invent_a_download_link():
+    composer = OpenAIComposer.__new__(OpenAIComposer)
+    composer._client = FakeOpenAIClient()
+    composer._model = "qwen-flash"
+    composer._instructions = "composer-test-v1"
+    composer._is_dashscope = True
+
+    answer = asyncio.run(
+        composer.compose(
+            "Download my submitted entries as CSV",
+            AgentPlan(intent="export_report"),
+            ExecutionResult(
+                message="Export ready.",
+                data={"type": "report_export", "row_count": 2, "filters": {}},
+            ),
+            None,
+            3,
+        )
+    )
+
+    assert answer == "Your role-scoped CSV export is ready with 2 matching time entries."
+    assert "http" not in answer
+    assert composer._client.responses.calls == []
+
+
+def test_time_entry_list_answer_defers_rows_to_structured_web_table():
+    composer = OpenAIComposer.__new__(OpenAIComposer)
+    composer._client = FakeOpenAIClient()
+    composer._model = "qwen-flash"
+    composer._instructions = "composer-test-v1"
+    composer._is_dashscope = True
+
+    answer = asyncio.run(
+        composer.compose(
+            "看下目前所有填的工时",
+            AgentPlan(intent="time_entries"),
+            ExecutionResult(
+                message="Found one entry.",
+                data=[{
+                    "id": 1, "project_name": "Apollo", "work_date": "2026-08-11",
+                    "hours": "1.25", "description": "Validated", "status": "submitted",
+                }],
+            ),
+            None,
+            3,
+        )
+    )
+
+    assert answer == "在你当前角色的权限范围内，共找到 1 条工时记录。"
+    assert composer._client.responses.calls == []

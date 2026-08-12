@@ -30,6 +30,11 @@ role from SQLite and applies record-level authorization.
    language, a currently visible preferred project, response detail, and
    default report format. Updates and deletion use dry-run plus explicit
    confirmation. They never grant access or complete write fields.
+4. **Structured long-term memories** contain only explicit work, reporting,
+   or collaboration preferences up to 200 characters. Every create, update,
+   and delete is actor-bound and requires dry-run plus confirmation. Prompts,
+   inferred traits, sensitive personal data, and authorization claims are not
+   accepted as memory categories.
 
 Conversation context may fill omitted filters for read-only follow-ups. It
 never fills missing fields for a single/batch draft, approval decision, or
@@ -88,13 +93,20 @@ parameterized aggregate query under SQLite query-only mode. See
 The AI API generates or validates a request ID, emits metadata-only structured
 logs, and exports low-cardinality request and intent counters. It deliberately
 does not log prompts, answers, actor IDs, tokens, policy excerpts, or workforce
-records. Metrics are process-local and reset when the container restarts.
+records. Metrics are process-local and reset when the container restarts. A
+separate SQLite Agent audit survives restarts and stores only request ID, role,
+mode, planned intent, tool names, status, authorization outcome, latency, and
+time. Only an admin can query it.
 
 ## Write-operation flow
 
 ```text
 User request → AI proposes single/batch action → dry-run preview → user confirmation → atomic demo API write → audit event
 ```
+
+Core validates exact duplicates and cumulative per-person/day hours at both
+preview and confirmation. Totals above 8 hours are visible warnings; totals
+above 24 hours and duplicate non-rejected records are blocked atomically.
 
 Personal suggestions are a separate read path. They are derived from the
 actor's own recent synthetic entries and active memberships, never create a

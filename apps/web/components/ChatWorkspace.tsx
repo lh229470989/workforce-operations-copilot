@@ -10,7 +10,9 @@ import type {
   Confirmation,
   ConversationItem,
   PolicyCitation,
+  ReportExportData,
   SafeAnalyticsData,
+  TimeEntryRow,
   TimeEntrySuggestionData,
   ToolEvent,
   WeeklyReportData,
@@ -57,12 +59,47 @@ function isSuggestionData(data: unknown): data is TimeEntrySuggestionData {
   );
 }
 
+function isTimeEntryRows(data: unknown): data is TimeEntryRow[] {
+  return Array.isArray(data) && data.every((row) => (
+    typeof row === "object" && row !== null &&
+    "work_date" in row && "hours" in row && "status" in row &&
+    "project_name" in row
+  ));
+}
+
+function TimeEntryTable({ rows }: { rows: TimeEntryRow[] }) {
+  return (
+    <section className="comparison-table" aria-label="Time entries">
+      <span className="section-label">ROLE-SCOPED TIME ENTRIES · {rows.length}</span>
+      {rows.length === 0 ? <p>No matching time entries.</p> : (
+        <table>
+          <thead><tr><th>Date</th><th>Project</th><th>Hours</th><th>Status</th><th>Description</th></tr></thead>
+          <tbody>{rows.map((row) => (
+            <tr key={row.id}>
+              <td>{row.work_date}</td><td>{row.project_name}</td><td>{row.hours}</td>
+              <td><span className={`entry-status ${row.status}`}>{row.status}</span></td>
+              <td>{row.description}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 function isWeeklyReportData(data: unknown): data is WeeklyReportData {
   return (
     typeof data === "object" &&
     data !== null &&
     "type" in data &&
     data.type === "weekly_report"
+  );
+}
+
+function isReportExportData(data: unknown): data is ReportExportData {
+  return (
+    typeof data === "object" && data !== null && "type" in data &&
+    data.type === "report_export" && "filters" in data
   );
 }
 
@@ -127,6 +164,18 @@ function WeeklyReport({ data, actorId }: { data: WeeklyReportData; actorId: numb
       <div><b>{data.total_hours}</b><span>hours</span></div>
       <div><b>{data.entry_count}</b><span>entries</span></div>
       <a href={download}>Download role-scoped CSV</a>
+    </section>
+  );
+}
+
+function ReportExport({ data, actorId }: { data: ReportExportData; actorId: number }) {
+  const params = new URLSearchParams({ actorId: String(actorId) });
+  Object.entries(data.filters).forEach(([key, value]) => params.set(key, String(value)));
+  return (
+    <section className="weekly-report" aria-label="Report export">
+      <div><span className="eyebrow">ROLE-SCOPED EXPORT</span><strong>Time-entry CSV</strong></div>
+      <div><b>{data.row_count}</b><span>matching rows</span></div>
+      <a href={`/api/reports/time-entries.csv?${params}`}>Download CSV</a>
     </section>
   );
 }
@@ -390,6 +439,7 @@ function AssistantResponse({
           </span>
         </div>
         <p className="assistant-message">{response.message}</p>
+        {isTimeEntryRows(response.data) && <TimeEntryTable rows={response.data} />}
         {response.citations && response.citations.length > 0 && (
           <CitationList citations={response.citations} />
         )}
@@ -399,6 +449,9 @@ function AssistantResponse({
         )}
         {isWeeklyReportData(response.data) && (
           <WeeklyReport actorId={actorId} data={response.data} />
+        )}
+        {isReportExportData(response.data) && (
+          <ReportExport actorId={actorId} data={response.data} />
         )}
         {isComparisonData(response.data) && <ComparisonTable data={response.data} />}
         {isSafeAnalyticsData(response.data) && <SafeAnalyticsTable data={response.data} />}
@@ -441,6 +494,12 @@ type PreferencePreview = {
   confirmation_token: string;
 };
 
+type StructuredMemory = {
+  id: string;
+  category: "work_preference" | "reporting_preference" | "collaboration_preference";
+  value: string;
+};
+
 function PrivacyControls({ actorId }: { actorId: number }) {
   const [current, setCurrent] = useState<PreferenceState | null>(null);
   const [historyEnabled, setHistoryEnabled] = useState(true);
@@ -449,12 +508,22 @@ function PrivacyControls({ actorId }: { actorId: number }) {
   const [responseDetail, setResponseDetail] = useState<"concise" | "standard" | "detailed">("standard");
   const [reportFormat, setReportFormat] = useState<"summary" | "csv">("summary");
   const [preview, setPreview] = useState<PreferencePreview | null>(null);
+  const [memories, setMemories] = useState<StructuredMemory[]>([]);
+  const [memoryCategory, setMemoryCategory] = useState<StructuredMemory["category"]>("work_preference");
+  const [memoryValue, setMemoryValue] = useState("");
   const [notice, setNotice] = useState("");
 
   async function load() {
-    const response = await fetch(`/api/preferences?actorId=${actorId}`, { cache: "no-store" });
+    const [response, memoryResponse] = await Promise.all([
+      fetch(`/api/preferences?actorId=${actorId}`, { cache: "no-store" }),
+      fetch(`/api/memories?actorId=${actorId}`, { cache: "no-store" }),
+    ]);
     const payload = (await response.json()) as PreferenceState;
     if (!response.ok) return;
+    if (memoryResponse.ok) {
+      const memoryPayload = await memoryResponse.json() as unknown;
+      setMemories(Array.isArray(memoryPayload) ? memoryPayload as StructuredMemory[] : []);
+    }
     setCurrent(payload); setHistoryEnabled(payload.history_enabled);
     setLanguage(payload.preferred_language);
     setPreferredProject(payload.preferred_project_id?.toString() ?? "");
@@ -487,14 +556,32 @@ function PrivacyControls({ actorId }: { actorId: number }) {
     if (response.ok) setPreview((await response.json()) as PreferencePreview);
   }
 
+  async function prepareMemory() {
+    const response = await fetch("/api/memories", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actorId, category: memoryCategory, value: memoryValue }),
+    });
+    if (response.ok) setPreview((await response.json()) as PreferencePreview);
+  }
+
+  async function prepareMemoryDeletion(memoryId: string) {
+    const response = await fetch(`/api/memories/${memoryId}?actorId=${actorId}`, { method: "DELETE" });
+    if (response.ok) setPreview((await response.json()) as PreferencePreview);
+  }
+
   async function confirm() {
     if (!preview) return;
+    const isMemoryAction = preview.action.endsWith("_memory");
+    const actionPath = isMemoryAction ? "memories" : "preferences";
     const response = await fetch(
-      `/api/preferences/actions/${preview.confirmation_token}/confirm`,
+      `/api/${actionPath}/actions/${preview.confirmation_token}/confirm`,
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actorId, confirm: true }) },
     );
     if (response.ok) {
-      const completedNotice = preview.action === "delete_private_state" ? "Private state deleted." : "Preferences saved.";
+      const completedNotice = preview.action === "delete_private_state"
+        ? "Private state deleted."
+        : isMemoryAction ? "Structured memory updated." : "Preferences saved.";
+      if (isMemoryAction) setMemoryValue("");
       setPreview(null); await load(); setNotice(completedNotice);
     }
   }
@@ -512,6 +599,14 @@ function PrivacyControls({ actorId }: { actorId: number }) {
           <label>Response detail<select value={responseDetail} onChange={(event) => setResponseDetail(event.target.value as "concise" | "standard" | "detailed")}><option value="concise">Concise</option><option value="standard">Standard</option><option value="detailed">Detailed</option></select></label>
           <label>Default report format<select value={reportFormat} onChange={(event) => setReportFormat(event.target.value as "summary" | "csv")}><option value="summary">On-screen summary</option><option value="csv">CSV download</option></select></label>
           <button type="button" onClick={() => void prepareUpdate()}>Preview changes</button>
+          <div className="structured-memory-list">
+            <strong>Explicit structured memories</strong>
+            {memories.length === 0 && <small>No saved memory facts.</small>}
+            {memories.map((memory) => <div key={memory.id}><span>{memory.category.replaceAll("_", " ")}: {memory.value}</span><button type="button" onClick={() => void prepareMemoryDeletion(memory.id)}>Preview delete</button></div>)}
+          </div>
+          <label>Memory category<select value={memoryCategory} onChange={(event) => setMemoryCategory(event.target.value as StructuredMemory["category"])}><option value="work_preference">Work preference</option><option value="reporting_preference">Reporting preference</option><option value="collaboration_preference">Collaboration preference</option></select></label>
+          <label>Non-sensitive preference<input maxLength={200} value={memoryValue} onChange={(event) => setMemoryValue(event.target.value)} placeholder="Explicit facts only" /></label>
+          <button disabled={!memoryValue.trim()} type="button" onClick={() => void prepareMemory()}>Preview memory</button>
           <button className="danger-link" type="button" onClick={() => void prepareDeletion()}>Preview private-state deletion</button>
         </>
       )}
@@ -547,20 +642,24 @@ function ReportControls({ actorId }: { actorId: number }) {
 }
 
 type AuditItem = { id: number; actor_id: number; action: string; resource_id: string; created_at: string };
+type AgentAuditItem = { id: number; request_id: string; intent: string; tool_names: string[]; status: string; mode: string };
 
 function AdminControls({ actorId }: { actorId: number }) {
   const [audit, setAudit] = useState<AuditItem[]>([]);
+  const [agentAudit, setAgentAudit] = useState<AgentAuditItem[]>([]);
   const [notice, setNotice] = useState("");
   const [auditStats, setAuditStats] = useState<{ total: number; by_action: Record<string, number> } | null>(null);
   if (actorId !== 1) return null;
 
   async function loadAudit() {
-    const [eventsResponse, statsResponse] = await Promise.all([
+    const [eventsResponse, statsResponse, agentResponse] = await Promise.all([
       fetch(`/api/admin/audit?actorId=${actorId}&page_size=8`, { cache: "no-store" }),
       fetch(`/api/admin/audit?actorId=${actorId}&stats=1`, { cache: "no-store" }),
+      fetch(`/api/admin/agent-audit?actorId=${actorId}`, { cache: "no-store" }),
     ]);
     if (eventsResponse.ok) setAudit(((await eventsResponse.json()) as { items: AuditItem[] }).items);
     if (statsResponse.ok) setAuditStats(await statsResponse.json() as { total: number; by_action: Record<string, number> });
+    if (agentResponse.ok) setAgentAudit((await agentResponse.json() as AgentAuditItem[]).slice(0, 8));
   }
 
   async function reloadKnowledge() {
@@ -577,6 +676,7 @@ function AdminControls({ actorId }: { actorId: number }) {
       {notice && <p>{notice}</p>}
       {auditStats && <p>{auditStats.total} confirmed write event(s) · {Object.keys(auditStats.by_action).length} action type(s)</p>}
       {audit.length > 0 && <ul>{audit.map((item) => <li key={item.id}><strong>{item.action}</strong> · actor {item.actor_id} · #{item.resource_id}</li>)}</ul>}
+      {agentAudit.length > 0 && <><strong>Metadata-only agent executions</strong><ul>{agentAudit.map((item) => <li key={item.id}><strong>{item.intent}</strong> · {item.mode} · {item.status} · {item.tool_names.join(", ") || "no tools"}</li>)}</ul></>}
     </details>
   );
 }

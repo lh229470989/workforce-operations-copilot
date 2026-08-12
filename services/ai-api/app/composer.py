@@ -169,6 +169,26 @@ class OpenAIComposer:
             "data point(s), using only records visible to your current role."
         )
 
+    @staticmethod
+    def _structured_ui_message(
+        message: str, plan: AgentPlan, result: ExecutionResult
+    ) -> str | None:
+        """Keep tabular/link wording aligned with trusted UI-owned data."""
+
+        data = result.data
+        is_chinese = any("\u4e00" <= character <= "\u9fff" for character in message)
+        if plan.intent == "time_entries" and isinstance(data, list):
+            count = len(data)
+            if is_chinese:
+                return f"在你当前角色的权限范围内，共找到 {count} 条工时记录。"
+            return f"I found {count} time entries within your current role scope."
+        if not isinstance(data, dict) or data.get("type") != "report_export":
+            return None
+        count = data.get("row_count", 0)
+        if is_chinese:
+            return f"已准备好包含 {count} 条匹配工时记录的权限范围内 CSV 下载。"
+        return f"Your role-scoped CSV export is ready with {count} matching time entries."
+
     async def compose(
         self,
         message: str,
@@ -183,6 +203,10 @@ class OpenAIComposer:
         if visualization_message is not None:
             await _emit_delta(visualization_message)
             return visualization_message
+        structured_message = self._structured_ui_message(message, plan, result)
+        if structured_message is not None:
+            await _emit_delta(structured_message)
+            return structured_message
         payload = {
             "user_message": message,
             "plan": plan.model_dump(mode="json"),

@@ -101,6 +101,8 @@ def install_observability(app: FastAPI, metrics: MetricsRegistry) -> None:
             if REQUEST_ID_PATTERN.fullmatch(supplied_request_id)
             else str(uuid4())
         )
+        # Downstream handlers use this safe identifier for metadata-only audit.
+        request.state.request_id = request_id
         started = perf_counter()
         status_code = 500
         try:

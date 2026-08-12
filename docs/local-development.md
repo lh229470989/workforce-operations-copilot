@@ -100,6 +100,17 @@ cd services/ai-api && .venv/bin/pytest
 cd apps/web && npm test && npm run typecheck && npm run build
 ```
 
+安装 Chromium 后，可针对已启动的 Compose 栈运行浏览器 E2E：
+
+```bash
+cd apps/web
+npx playwright install chromium
+npm run test:e2e
+```
+
+GitHub Actions 会构建完整 Compose 栈并执行同一组 E2E，覆盖 SSE 对话、对话式
+CSV 下载卡、写操作 dry-run 和管理员审计入口。
+
 重新发布或推送前还应运行：
 
 ```bash

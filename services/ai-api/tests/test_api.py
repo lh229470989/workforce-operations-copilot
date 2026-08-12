@@ -144,6 +144,7 @@ def test_lists_recent_time_entries_with_limit_and_status(client):
     body = response.json()
     assert len(body["data"]) == 1
     assert body["data"][0]["status"] == "submitted"
+    assert body["data"][0]["project_name"] == "Apollo"
     assert body["tool_events"][1]["input"]["limit"] == 1
 
 
@@ -684,3 +685,69 @@ def test_structured_long_term_preferences_round_trip(client):
     preferences = client.get("/preferences", headers={"X-Actor-ID": "3"}).json()
     assert preferences["response_detail"] == "detailed"
     assert preferences["report_format"] == "csv"
+
+
+def test_structured_memory_requires_preview_and_confirmation(client):
+    preview = client.post(
+        "/memories/dry-run",
+        headers={"X-Actor-ID": "3"},
+        json={
+            "category": "reporting_preference",
+            "value": "Prefer weekly summaries grouped by project",
+        },
+    )
+    assert preview.status_code == 201
+    assert client.get("/memories", headers={"X-Actor-ID": "3"}).json() == []
+
+    confirmed = client.post(
+        f"/memories/actions/{preview.json()['confirmation_token']}/confirm",
+        headers={"X-Actor-ID": "3"},
+        json={"confirm": True},
+    )
+    assert confirmed.status_code == 200
+    memories = client.get("/memories", headers={"X-Actor-ID": "3"}).json()
+    assert memories[0]["category"] == "reporting_preference"
+    assert client.get("/memories", headers={"X-Actor-ID": "2"}).json() == []
+
+    sensitive = client.post(
+        "/memories/dry-run",
+        headers={"X-Actor-ID": "3"},
+        json={"category": "work_preference", "value": "API key sk-example"},
+    )
+    assert sensitive.status_code == 422
+
+
+def test_admin_agent_audit_contains_metadata_not_conversation_content(client):
+    secret_phrase = "private-example-phrase-not-for-audit"
+    chat = client.post(
+        "/chat",
+        headers={"X-Actor-ID": "3", "X-Request-ID": "audit-test-request"},
+        json={"message": f"Which projects can I see? {secret_phrase}"},
+    )
+    assert chat.status_code == 200
+    assert client.get("/agent-audit", headers={"X-Actor-ID": "3"}).status_code == 403
+
+    audit = client.get("/agent-audit", headers={"X-Actor-ID": "1"}).json()
+    record = audit[0]
+    assert record["request_id"] == "audit-test-request"
+    assert record["intent"] == "list_projects"
+    assert record["tool_names"] == ["list_projects"]
+    assert secret_phrase not in str(record)
+    assert "actor_id" not in record
+
+
+def test_conversational_report_export_returns_download_descriptor(client):
+    response = client.post(
+        "/chat",
+        headers={"X-Actor-ID": "3"},
+        json={"message": "Download my submitted time entries as CSV"},
+    )
+    body = response.json()
+    assert response.status_code == 200
+    assert body["data"] == {
+        "type": "report_export",
+        "format": "csv",
+        "row_count": 1,
+        "filters": {"status": "submitted"},
+    }
+    assert body["confirmation"] is None

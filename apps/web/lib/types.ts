@@ -54,6 +54,17 @@ export type TimeEntrySuggestionData = {
   suggestions: TimeEntrySuggestion[];
 };
 
+export type TimeEntryRow = {
+  id: number;
+  employee_id: number;
+  project_id: number;
+  project_name: string;
+  work_date: string;
+  hours: string;
+  description: string;
+  status: "draft" | "submitted" | "approved" | "rejected";
+};
+
 export type WeeklyReportData = {
   type: "weekly_report";
   week_start: string;
@@ -62,6 +73,13 @@ export type WeeklyReportData = {
   entry_count: number;
   hours_by_status: Record<string, string>;
   entries: Array<Record<string, unknown>>;
+};
+
+export type ReportExportData = {
+  type: "report_export";
+  format: "csv";
+  row_count: number;
+  filters: Record<string, string | number>;
 };
 
 export type ComparisonData = {

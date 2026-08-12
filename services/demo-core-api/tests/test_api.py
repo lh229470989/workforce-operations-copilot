@@ -197,6 +197,88 @@ def test_batch_rejects_an_unauthorized_item_without_pending_action(
     assert response.status_code == 403
 
 
+def test_time_entry_validation_blocks_exact_duplicates(client, employee_headers):
+    payload = {
+        "project_id": 1,
+        "work_date": "2026-08-03",
+        "hours": "2.00",
+        "description": "Validated duplicate detection",
+    }
+    preview = client.post(
+        "/time-entries/dry-run", headers=employee_headers, json=payload
+    ).json()
+    confirmed = client.post(
+        f"/actions/{preview['confirmation_token']}/confirm",
+        headers=employee_headers,
+        json={"confirm": True},
+    )
+    assert confirmed.status_code == 200
+
+    duplicate = client.post(
+        "/time-entries/dry-run", headers=employee_headers, json=payload
+    )
+    assert duplicate.status_code == 422
+    detail = duplicate.json()["detail"]
+    assert detail["code"] == "time_entry_validation_failed"
+    assert detail["items"][0]["issues"][0]["code"] == "possible_duplicate"
+
+    whitespace_variant = client.post(
+        "/time-entries/dry-run",
+        headers=employee_headers,
+        json={**payload, "description": " Validated   duplicate detection "},
+    )
+    assert whitespace_variant.status_code == 422
+
+
+def test_time_entry_validation_warns_above_standard_day(
+    client, employee_headers
+):
+    response = client.post(
+        "/time-entries/dry-run",
+        headers=employee_headers,
+        json={
+            "project_id": 1,
+            "work_date": "2026-08-04",
+            "hours": "9.00",
+            "description": "Intentional overtime coverage",
+        },
+    )
+
+    assert response.status_code == 201
+    validation = response.json()["preview"]["validation"]
+    assert validation["status"] == "warning"
+    assert validation["issues"][0]["code"] == "daily_hours_above_standard"
+
+
+def test_batch_validation_is_cumulative_and_atomic(client, employee_headers):
+    response = client.post(
+        "/time-entries/batch/dry-run",
+        headers=employee_headers,
+        json={
+            "entries": [
+                {
+                    "project_id": 1,
+                    "work_date": "2026-08-05",
+                    "hours": "12.50",
+                    "description": "First cumulative block",
+                },
+                {
+                    "project_id": 1,
+                    "work_date": "2026-08-05",
+                    "hours": "12.00",
+                    "description": "Second cumulative block",
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    items = response.json()["detail"]["items"]
+    assert items[0]["status"] == "warning"
+    assert items[1]["status"] == "blocked"
+    assert items[1]["issues"][0]["code"] == "daily_hours_exceeded"
+
+
 def test_time_entry_requires_explicit_confirmation(client, employee_headers):
     preview = client.post(
         "/time-entries/dry-run",

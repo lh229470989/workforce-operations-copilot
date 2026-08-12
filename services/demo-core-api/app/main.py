@@ -54,6 +54,8 @@ DEFAULT_DATABASE_URL = "sqlite:///./data/demo.db"
 ACTION_TTL_MINUTES = 15
 ANALYTICS_TIMEOUT_SECONDS = 1.0
 BUSINESS_TIMEZONE = os.getenv("BUSINESS_TIMEZONE", "Asia/Shanghai")
+STANDARD_DAILY_HOURS = Decimal("8")
+MAX_DAILY_HOURS = Decimal("24")
 
 
 def _utcnow() -> datetime:
@@ -124,6 +126,128 @@ def _prepare_time_entry_preview(
         "status": "draft",
     }
     return payload, preview
+
+
+def _validate_time_entry_proposals(
+    session: Session,
+    proposals: list[dict],
+    *,
+    exclude_entry_ids: set[int] | None = None,
+) -> list[dict]:
+    """Validate cumulative hours and duplicates across existing and proposed work."""
+
+    excluded = exclude_entry_ids or set()
+    results: list[dict] = []
+    proposed_totals: dict[tuple[int, date], Decimal] = {}
+    proposed_signatures: set[tuple[int, int, date, Decimal, str]] = set()
+    for index, item in enumerate(proposals):
+        employee_id = int(item["employee_id"])
+        project_id = int(item["project_id"])
+        work_date = (
+            date.fromisoformat(item["work_date"])
+            if isinstance(item["work_date"], str)
+            else item["work_date"]
+        )
+        hours = Decimal(str(item["hours"]))
+        normalized_description = " ".join(item["description"].casefold().split())
+        signature = (
+            employee_id,
+            project_id,
+            work_date,
+            hours,
+            normalized_description,
+        )
+        issues: list[dict[str, str]] = []
+        duplicate_query = select(TimeEntry.id, TimeEntry.description).where(
+            TimeEntry.employee_id == employee_id,
+            TimeEntry.project_id == project_id,
+            TimeEntry.work_date == work_date,
+            TimeEntry.hours == hours,
+            TimeEntry.status != "rejected",
+        )
+        if excluded:
+            duplicate_query = duplicate_query.where(TimeEntry.id.not_in(excluded))
+        database_duplicate = any(
+            " ".join(description.casefold().split()) == normalized_description
+            for _, description in session.execute(duplicate_query).all()
+        )
+        if database_duplicate or signature in proposed_signatures:
+            issues.append(
+                {
+                    "severity": "blocked",
+                    "code": "possible_duplicate",
+                    "message": "An equivalent non-rejected time entry already exists.",
+                    "suggested_fix": "Change the project, date, hours, or description; otherwise use the existing entry.",
+                }
+            )
+        proposed_signatures.add(signature)
+
+        total_query = select(func.coalesce(func.sum(TimeEntry.hours), 0)).where(
+            TimeEntry.employee_id == employee_id,
+            TimeEntry.work_date == work_date,
+            TimeEntry.status != "rejected",
+        )
+        if excluded:
+            total_query = total_query.where(TimeEntry.id.not_in(excluded))
+        existing_total = Decimal(str(session.scalar(total_query) or 0))
+        key = (employee_id, work_date)
+        proposed_total = proposed_totals.get(key, Decimal("0")) + hours
+        proposed_totals[key] = proposed_total
+        resulting_total = existing_total + proposed_total
+        if resulting_total > MAX_DAILY_HOURS:
+            issues.append(
+                {
+                    "severity": "blocked",
+                    "code": "daily_hours_exceeded",
+                    "message": f"The resulting daily total would be {resulting_total} hours, above the 24-hour maximum.",
+                    "suggested_fix": "Reduce hours or move work to the correct date.",
+                }
+            )
+        elif resulting_total > STANDARD_DAILY_HOURS:
+            issues.append(
+                {
+                    "severity": "warning",
+                    "code": "daily_hours_above_standard",
+                    "message": f"The resulting daily total would be {resulting_total} hours, above the standard 8-hour day.",
+                    "suggested_fix": "Confirm that overtime is intentional and accurately recorded.",
+                }
+            )
+        results.append(
+            {
+                "index": index,
+                "resulting_daily_hours": str(resulting_total),
+                "status": (
+                    "blocked"
+                    if any(issue["severity"] == "blocked" for issue in issues)
+                    else "warning"
+                    if issues
+                    else "valid"
+                ),
+                "issues": issues,
+            }
+        )
+    return results
+
+
+def _require_valid_time_entry_proposals(
+    session: Session,
+    proposals: list[dict],
+    *,
+    exclude_entry_ids: set[int] | None = None,
+) -> list[dict]:
+    validation = _validate_time_entry_proposals(
+        session, proposals, exclude_entry_ids=exclude_entry_ids
+    )
+    if any(item["status"] == "blocked" for item in validation):
+        raise HTTPException(
+            422,
+            detail={
+                "code": "time_entry_validation_failed",
+                "message": "No confirmation token was created because one or more entries are blocked.",
+                "items": validation,
+            },
+        )
+    return validation
 
 
 def _require_entry_owner_or_admin(actor: Employee, entry: TimeEntry) -> None:
@@ -744,6 +868,8 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
         body: TimeEntryDraftRequest, session: SessionDep, actor: ActorDep
     ) -> DryRunResponse:
         payload, preview = _prepare_time_entry_preview(session, actor, body)
+        validation = _require_valid_time_entry_proposals(session, [payload])
+        preview["validation"] = validation[0]
         action = _pending_action(session, actor, "create_time_entry", payload)
         return DryRunResponse(
             action="create_time_entry",
@@ -769,10 +895,16 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
             _prepare_time_entry_preview(session, actor, entry)
             for entry in body.entries
         ]
-        payload = {"entries": [item[0] for item in prepared]}
+        payload_entries = [item[0] for item in prepared]
+        validation = _require_valid_time_entry_proposals(session, payload_entries)
+        payload = {"entries": payload_entries}
         preview = {
             "count": len(prepared),
-            "entries": [item[1] for item in prepared],
+            "status": "warning" if any(item["status"] == "warning" for item in validation) else "valid",
+            "entries": [
+                {**item[1], "validation": validation[index]}
+                for index, item in enumerate(prepared)
+            ],
         }
         action = _pending_action(session, actor, "create_time_entries", payload)
         return DryRunResponse(
@@ -816,6 +948,16 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
             "expected_status": entry.status,
             "changes": changes,
         }
+        proposed = {
+            "employee_id": entry.employee_id,
+            "project_id": project_id,
+            "work_date": changes.get("work_date", entry.work_date.isoformat()),
+            "hours": changes.get("hours", str(entry.hours)),
+            "description": changes.get("description", entry.description),
+        }
+        validation = _require_valid_time_entry_proposals(
+            session, [proposed], exclude_entry_ids={entry.id}
+        )
         preview = {
             "before": TimeEntryOut.model_validate(entry).model_dump(mode="json"),
             "after": {
@@ -823,6 +965,7 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
                 **changes,
                 "project_name": project.name,
             },
+            "validation": validation[0],
         }
         action = _pending_action(session, actor, "update_time_entry", payload)
         return DryRunResponse(
@@ -1046,6 +1189,7 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
 
         payload = json.loads(action.payload)
         if action.action_type == "create_time_entry":
+            _require_valid_time_entry_proposals(session, [payload])
             employee = session.get(Employee, payload["employee_id"])
             project = session.get(Project, payload["project_id"])
             if employee is None or project is None:
@@ -1082,6 +1226,7 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
             result = TimeEntryOut.model_validate(entry).model_dump(mode="json")
             resource_id = str(entry.id)
         elif action.action_type == "create_time_entries":
+            _require_valid_time_entry_proposals(session, payload["entries"])
             created_entries: list[TimeEntry] = []
             for item in payload["entries"]:
                 employee = session.get(Employee, item["employee_id"])
@@ -1138,6 +1283,23 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
                 raise HTTPException(409, "Time entry status changed after preview")
             changes = payload["changes"]
             project_id = changes.get("project_id", entry.project_id)
+            _require_valid_time_entry_proposals(
+                session,
+                [
+                    {
+                        "employee_id": entry.employee_id,
+                        "project_id": project_id,
+                        "work_date": changes.get(
+                            "work_date", entry.work_date.isoformat()
+                        ),
+                        "hours": changes.get("hours", str(entry.hours)),
+                        "description": changes.get(
+                            "description", entry.description
+                        ),
+                    }
+                ],
+                exclude_entry_ids={entry.id},
+            )
             membership = session.scalar(
                 select(ProjectMember).where(
                     ProjectMember.employee_id == entry.employee_id,

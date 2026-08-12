@@ -9,6 +9,9 @@ __pycache__/
 node_modules/
 .next/
 data/
+database-snapshots/
 coverage/
+playwright-report/
+test-results/
 *.tsbuildinfo
 build/

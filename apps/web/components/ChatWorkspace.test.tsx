@@ -32,6 +32,23 @@ afterEach(() => {
 });
 
 describe("ChatWorkspace", () => {
+  it("renders time entries as a readable structured table", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      message: "在你当前角色的权限范围内，共找到 1 条工时记录。",
+      mode: "openai", tool_events: [], confirmation: null,
+      data: [{ id: 7, employee_id: 3, project_id: 1, project_name: "Apollo",
+        work_date: "2026-08-11", hours: "1.25", status: "submitted",
+        description: "Validated lifecycle demo" }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const user = userEvent.setup(); render(<ChatWorkspace />);
+    await user.type(screen.getByLabelText("Message Acme Copilot"), "看下目前所有填的工时");
+    await user.click(screen.getByRole("button", { name: /Send/i }));
+    const table = await screen.findByRole("region", { name: "Time entries" });
+    expect(table).toHaveTextContent("2026-08-11");
+    expect(table).toHaveTextContent("Apollo");
+    expect(table).toHaveTextContent("Validated lifecycle demo");
+  });
+
   it("renders safe analytics rows and the declarative specification", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       message: "Safe analysis complete.", mode: "local", tool_events: [],
@@ -53,9 +70,11 @@ describe("ChatWorkspace", () => {
     const changed = { ...defaults, history_enabled: false, preferred_language: "zh" };
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify(defaults), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ action: "update_preferences", preview: changed, confirmation_token: "55555555-5555-5555-5555-555555555555" }), { status: 201, headers: { "Content-Type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ result: changed }), { status: 200, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(changed), { status: 200, headers: { "Content-Type": "application/json" } }));
+      .mockResolvedValueOnce(new Response(JSON.stringify(changed), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } }));
     const user = userEvent.setup(); render(<ChatWorkspace />);
     await user.click(screen.getByText("Privacy & memory"));
     await user.click(screen.getByRole("button", { name: "Load my settings" }));
@@ -63,10 +82,10 @@ describe("ChatWorkspace", () => {
     await user.selectOptions(screen.getByLabelText("Reply preference"), "zh");
     await user.click(screen.getByRole("button", { name: "Preview changes" }));
     expect(await screen.findByText(/DRY RUN · update preferences/i)).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     await user.click(screen.getByRole("button", { name: "Explicitly confirm" }));
     expect(await screen.findByText("Preferences saved.")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
   it("renders multi-tool comparison rows and deltas", async () => {

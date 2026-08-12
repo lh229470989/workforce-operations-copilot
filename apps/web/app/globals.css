@@ -815,6 +815,21 @@ button:disabled {
   font-size: 8px;
 }
 
+.entry-status {
+  border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+  border-radius: 999px;
+  display: inline-block;
+  font-family: var(--font-mono), monospace;
+  font-size: 10px;
+  padding: 2px 7px;
+  text-transform: uppercase;
+}
+
+.entry-status.approved { color: #83d99b; }
+.entry-status.submitted { color: #83bfe8; }
+.entry-status.draft { color: #e5c375; }
+.entry-status.rejected { color: #e88989; }
+
 .privacy-controls {
   border-top: 1px solid rgb(255 255 255 / 16%);
   color: #e8e8e2;

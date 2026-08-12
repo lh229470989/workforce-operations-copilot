@@ -79,7 +79,11 @@ def test_persistent_state_physically_purges_expired_private_data(tmp_path):
     now[0] = 1001.0
     purged = asyncio.run(store.cleanup_expired())
 
-    assert purged == {"sessions": 1, "preference_actions": 1}
+    assert purged == {
+        "sessions": 1,
+        "preference_actions": 1,
+        "memory_actions": 0,
+    }
     replacement = asyncio.run(store.open(2, session.session_id))
     assert replacement.actor_id == 2
     with pytest.raises(KeyError):

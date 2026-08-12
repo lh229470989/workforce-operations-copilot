@@ -23,6 +23,7 @@ READ_INTENTS = frozenset(
         "summary",
         "monthly_chart",
         "weekly_report",
+        "export_report",
         "pending_team",
     }
 )
@@ -120,6 +121,37 @@ class ReadQueryRegistry:
                 )
             ],
             data=data,
+        )
+
+    async def _handle_export_report(
+        self, plan: AgentPlan, actor_id: int
+    ) -> ExecutionResult:
+        """Prepare a role-scoped download descriptor for the web client."""
+
+        entries, project, events = await self._filtered_entries(plan, actor_id)
+        if entries is None:
+            return ExecutionResult(
+                message="That project is not available in your authorized scope.",
+                tool_events=events,
+            )
+        filters = {
+            "project_id": project["id"] if project else None,
+            "status": plan.entry_status,
+            "start_date": plan.start_date.isoformat() if plan.start_date else None,
+            "end_date": plan.end_date.isoformat() if plan.end_date else None,
+        }
+        return ExecutionResult(
+            message=(
+                f"Your role-scoped CSV export is ready with {len(entries)} "
+                "matching time entries."
+            ),
+            tool_events=events,
+            data={
+                "type": "report_export",
+                "format": "csv",
+                "row_count": len(entries),
+                "filters": {key: value for key, value in filters.items() if value is not None},
+            },
         )
 
     async def _handle_list_employees(
@@ -243,10 +275,24 @@ class ReadQueryRegistry:
             qualifiers.append(project["name"])
         label = f" {' '.join(qualifiers)}" if qualifiers else ""
         noun = "time entry" if len(entries) == 1 else "time entries"
+        project_names = {
+            item["id"]: item["name"] for item in events[0].output
+        }
+        # The web renders these authorized rows directly. Supplying the
+        # project label here avoids asking the model or browser to infer it.
+        enriched_entries = [
+            {
+                **entry,
+                "project_name": project_names.get(
+                    entry["project_id"], "Unavailable project"
+                ),
+            }
+            for entry in entries
+        ]
         return ExecutionResult(
             message=f"I found {len(entries)}{label} {noun} in your role scope.",
             tool_events=events,
-            data=entries,
+            data=enriched_entries,
         )
 
     async def _handle_hours_by_project(

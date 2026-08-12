@@ -499,6 +499,23 @@ class LocalPlanner:
                 ),
             )
 
+        export_requested = any(
+            phrase in lowered
+            for phrase in ("export", "download", "csv", "导出", "下载")
+        )
+        report_subject = any(
+            phrase in lowered
+            for phrase in ("report", "time entries", "timesheet", "工时", "报表")
+        )
+        if export_requested and report_subject:
+            return AgentPlan(
+                intent="export_report",
+                project_name=project_name,
+                start_date=start_date,
+                end_date=end_date,
+                entry_status=entry_status,
+            )
+
         if (
             any(phrase in lowered for phrase in ("weekly report", "week report"))
             or "周报" in text
@@ -768,7 +785,11 @@ class OpenAIPlanner:
         local_guard_plan = await LocalPlanner().plan(
             message, today, actor_id, context
         )
-        if local_guard_plan.intent in {"manage_time_entry", "decide_time_entries"}:
+        if local_guard_plan.intent in {
+            "manage_time_entry",
+            "decide_time_entries",
+            "export_report",
+        }:
             parsed_plan = local_guard_plan
         elif local_guard_plan.intent == "safe_sql_analysis":
             parsed_plan = local_guard_plan
