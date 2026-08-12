@@ -21,9 +21,8 @@ tests, and local deployment path.
 | Permission boundary | As Jamie, ask `Can I approve my team's pending time entries?` | The employee is refused the manager action while still receiving useful, role-scoped information. |
 | Review-first write | `Draft 1 hour on Apollo for 2026-12-18, description: portfolio demo` | The system returns a dry-run and server-issued confirmation step; nothing is written before a separate click. |
 
-[Open the 60–90 second walkthrough script and shot list](docs/portfolio-demo.md).
-A public video or hosted-demo link will be added only when that asset is live;
-the README does not point to a placeholder deployment.
+▶ [Watch the 80-second product walkthrough](https://github.com/lh229470989/workforce-operations-copilot/releases/download/portfolio-demo-v1/workforce-operations-copilot-demo.webm)
+or [open the recording script and shot list](docs/portfolio-demo.md).
 
 ## What a client can verify
 

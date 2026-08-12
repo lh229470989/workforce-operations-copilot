@@ -3,6 +3,14 @@
 This package is designed for an Upwork portfolio item, proposal attachment, or
 short screen recording. It uses only the fictional AcmeWorks dataset.
 
+## Published walkthrough
+
+[Watch or download the 80-second `1280 × 720` walkthrough](https://github.com/lh229470989/workforce-operations-copilot/releases/download/portfolio-demo-v1/workforce-operations-copilot-demo.webm).
+It was recorded from the clean, merged `main` environment and covers grounded
+policy retrieval, role-aware refusal, dry-run review, explicit confirmation,
+and role-scoped analytics. Release asset SHA-256:
+`3a2cf393fba54d4d9353ddb2592f3fa1b43d6f79f27bbc96b5e1577a5212190e`.
+
 ## 60–90 second walkthrough script
 
 Target length: about 75 seconds. Record at `1280 × 720`, keep the browser zoom
@@ -80,6 +88,6 @@ or employer data is used.
 - Confirm the policy, refusal, dry-run, confirmation, and audit paths still work.
 - Remove notifications, account avatars, extensions, and unrelated tabs.
 - Run `python3 scripts/security_scan.py` and the full verification suite.
-- Upload the video to the selected portfolio host before adding its URL to the README.
+- Keep the published video URL and checksum valid when replacing the asset.
 - Add a homepage URL only after the hosted demo has monitoring, budget limits,
   abuse controls, and a tested shutdown path.
