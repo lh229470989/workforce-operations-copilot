@@ -30,8 +30,8 @@
 
 | 阶段 | 目标 | 状态 |
 | --- | --- | --- |
-| 第一阶段 | 让当前项目达到可直接用于 Upwork 投递的展示质量 | 进行中：改动已进入独立分支，待 PR CI、合并、干净环境录制和视频 URL |
-| 第二阶段 | 增加一个贴近中小企业场景的真实自动化纵向案例 | 方案已确认：待第一阶段闭环后创建独立设计分支 |
+| 第一阶段 | 让当前项目达到可直接用于 Upwork 投递的展示质量 | 已完成：PR CI、合并、干净环境录制和公开视频 URL 均已闭环 |
+| 第二阶段 | 增加一个贴近中小企业场景的真实自动化纵向案例 | 方案已确认：下一步创建独立设计分支 |
 | 第三阶段 | 补齐常见交付能力和 Upwork 需求关键词 | 待开始 |
 | 第四阶段 | 根据真实投递与客户反馈选择专业化方向 | 待开始 |
 
@@ -59,7 +59,7 @@
 - [x] 将权限、审批、审计、评估和 CI 汇总为易理解的差异化能力。
 - [x] 明确作者承担的设计和实现范围。
 - [x] 保留架构、运行方式、安全边界与已知限制，但降低其首屏权重。
-- [ ] 录制、上传演示视频，并将真实可访问的 URL 加入 README。
+- [x] 录制、上传演示视频，并将真实可访问的 URL 加入 README。
 
 #### 4.3 准备演示材料
 
@@ -74,7 +74,7 @@
 - [x] 添加与实际能力相符的 topics。
 - [x] 在线演示可用后再设置 homepage URL；当前明确保持为空。
 - [x] 当前默认分支 `verify` CI 为绿色；README 不展示占位视频、失效在线 Demo 或未实现承诺。
-- [ ] 本批次通过 Pull Request CI 后合并到默认分支。
+- [x] 第一阶段主批次通过 Pull Request #2 的完整 CI 后合并到默认分支。
 
 ### 验收标准
 
@@ -91,17 +91,17 @@
 - 代码证据：`apps/web/components/ChatWorkspace.tsx` 使用受限 Markdown 元素集合并禁止原始 HTML；空对话不触发自动滚动；`apps/web/e2e/copilot.spec.ts` 固定验证两个目标视口。
 - 视觉证据：`docs/assets/portfolio/` 保存 6 张从本地真实服务捕获的截图；`docs/portfolio-demo.md` 保存录制脚本、Upwork 文案和发布检查表。
 - 自动验证：Demo Core API `29 passed`，AI API `104 passed`，MCP `4 passed`，Web `14 passed`，Playwright `5 passed`；TypeScript、Next.js production build 和 publication security scan 通过。
-- 外部状态：GitHub description 和 8 个真实能力 topics 已设置；homepage 保持为空；更新前最新 `main` 分支 `verify` run `31614973835` 为成功。
-- 外部依赖：本批次改动尚未通过 PR CI；公开视频录制/托管尚未完成，因此第一阶段保持“进行中”而不是宣称全部完成。
+- 外部状态：GitHub description 和 8 个真实能力 topics 已设置；homepage 保持为空；第一阶段主批次 Pull Request #2 的 8 个 CI job 全部通过并 squash 合并为 `344508a`。
+- 视频证据：从合并后的干净 `main` 和全新虚构数据卷录制 `80.72s`、`1280 × 720` WebM；视频经关键场景抽帧复核后上传为 `portfolio-demo-v1` release asset，SHA-256 为 `3a2cf393fba54d4d9353ddb2592f3fa1b43d6f79f27bbc96b5e1577a5212190e`。
 
-### 第一阶段剩余闭环顺序
+### 第一阶段闭环记录
 
-1. 从当前工作区创建第一阶段独立分支并提交 Pull Request。
-2. 等待完整 CI 通过后合并到 `main`。
-3. 从合并后的干净 `main` 重建环境并清理虚构数据库。
-4. 录制并上传演示视频。
-5. 通过小型后续 Pull Request 添加真实视频 URL。
-6. 将第一阶段标记为完成，再开始第二阶段设计分支。
+1. [x] 创建 `agent/portfolio-phase-1` 并提交 Pull Request #2。
+2. [x] 等待 8 个 CI job 全部通过，squash 合并到 `main`。
+3. [x] 从合并后的干净 `main` 删除并重建两个虚构数据卷及四服务环境。
+4. [x] 录制、抽帧复核并上传 80 秒演示视频。
+5. [x] 通过小型后续 Pull Request 添加真实视频 URL。
+6. [x] 将第一阶段标记为完成；第二阶段仅从独立设计分支开始。
 
 ## 5. 第二阶段：中小企业自动化纵向案例
 
