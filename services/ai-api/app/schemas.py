@@ -150,6 +150,9 @@ class AgentPlan(BaseModel):
         "decide_time_entry",
         "decide_time_entries",
         "manage_time_entry",
+        "remember_memory",
+        "list_memories",
+        "forget_memory",
         "greeting",
         "general_chat",
         "capabilities",
@@ -187,6 +190,11 @@ class AgentPlan(BaseModel):
         default_factory=list, min_length=0, max_length=4
     )
     analytics_query: AnalyticsQuerySpec | None = None
+    memory_category: Literal[
+        "work_preference", "reporting_preference", "collaboration_preference"
+    ] | None = None
+    memory_value: str | None = Field(default=None, max_length=200)
+    memory_id: str | None = Field(default=None, max_length=80)
 
     @field_validator("inherit_fields", "time_entry_ids", mode="before")
     @classmethod

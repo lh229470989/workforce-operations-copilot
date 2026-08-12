@@ -165,7 +165,7 @@ class ReadQueryRegistry:
                 f"{len(employees)} {noun} visible in your role scope: {names}."
             ),
             tool_events=[tool_event("list_employees", {}, employees)],
-            data=employees,
+            data={"type": "employees", "rows": employees},
         )
 
     async def _handle_list_projects(
@@ -176,7 +176,7 @@ class ReadQueryRegistry:
         return ExecutionResult(
             message=f"Your visible projects are: {names}.",
             tool_events=[tool_event("list_projects", {}, projects)],
-            data=projects,
+            data={"type": "projects", "rows": projects},
         )
 
     async def _project_context(
@@ -229,7 +229,12 @@ class ReadQueryRegistry:
                 "within your role scope."
             ),
             tool_events=events,
-            data=enriched,
+            data={
+                "type": "project_members",
+                "project_id": project["id"],
+                "project_name": project["name"],
+                "rows": enriched,
+            },
         )
 
     async def _filtered_entries(
@@ -406,5 +411,5 @@ class ReadQueryRegistry:
         return ExecutionResult(
             message=message,
             tool_events=events,
-            data=entries,
+            data={"type": "pending_approvals", "rows": entries},
         )

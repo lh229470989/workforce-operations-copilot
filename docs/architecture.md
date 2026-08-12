@@ -11,6 +11,7 @@ boundary specification.
 | `apps/web` | Chat, data workspace, approval cards, charts | Only synthetic data |
 | `services/ai-api` | Agent orchestration, RAG, authorization, tool dispatch | No production adapters |
 | `services/demo-core-api` | Mock internal workforce API | SQLite and seeded fictional data |
+| `services/acmeworks-mcp` | MCP 2.0 tools, resources, and prompts | Core API only; no direct DB or confirmation tool |
 | `knowledge-base` | Fictional policies used for retrieval | Authored from scratch |
 
 ## Web request boundary
@@ -121,3 +122,14 @@ same boundary. Ownership, role, membership, and current status are validated
 again when the single-use token is consumed.
 
 The AI API must enforce role-aware filtering server-side. The browser is never the authorization boundary.
+
+## MCP and report boundary
+
+The MCP service forwards an explicit fictional actor to Core API and inherits
+the same server-side row scope. Preview tools hide confirmation credentials
+from model-visible output and expose no confirmation tool. See
+[MCP and connector boundaries](mcp-and-connectors.md).
+
+CSV, XLSX, and PDF exporters all reuse the same scoped time-entry query. The
+model returns only a structured report descriptor; trusted Next.js routes build
+the actual download URL and forward the actor server-side.

@@ -65,6 +65,33 @@ export type TimeEntryRow = {
   status: "draft" | "submitted" | "approved" | "rejected";
 };
 
+export type EmployeeData = {
+  type: "employees";
+  rows: Array<{ id: number; name: string; title: string; role: string; email: string; department_id: number; manager_id: number | null }>;
+};
+
+export type ProjectData = {
+  type: "projects";
+  rows: Array<{ id: number; name: string; code: string; status: string; description: string; department_id: number }>;
+};
+
+export type ProjectMemberData = {
+  type: "project_members";
+  project_id: number;
+  project_name: string;
+  rows: Array<{ id: number; employee_id: number; employee_name: string; project_role: string }>;
+};
+
+export type PendingApprovalData = {
+  type: "pending_approvals";
+  rows: TimeEntryRow[];
+};
+
+export type StructuredMemoryData = {
+  type: "structured_memories";
+  rows: Array<{ id: string; category: string; value: string; updated_at: number }>;
+};
+
 export type WeeklyReportData = {
   type: "weekly_report";
   week_start: string;
@@ -77,7 +104,7 @@ export type WeeklyReportData = {
 
 export type ReportExportData = {
   type: "report_export";
-  format: "csv";
+  format: "csv" | "xlsx" | "pdf";
   row_count: number;
   filters: Record<string, string | number>;
 };

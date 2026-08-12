@@ -10,7 +10,7 @@ from app.prompt_registry import PromptRegistry
 def test_checked_in_prompt_manifest_loads_named_versions():
     registry = PromptRegistry(Path(DEFAULT_PROMPT_PATH))
 
-    assert registry.versions == {"planner": "1.1.0", "composer": "1.1.0"}
+    assert registry.versions == {"planner": "1.2.0", "composer": "1.1.0"}
     assert "Return exactly one AgentPlan" in registry.get("planner").text
     assert "source of truth" in registry.get("composer").text
 

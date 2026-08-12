@@ -1,16 +1,24 @@
 import json
 import os
 import csv
+from copy import copy
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from io import StringIO
+from io import BytesIO, StringIO
 from time import monotonic
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
+from openpyxl import Workbook
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy import case, func, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -74,6 +82,31 @@ def _scoped_entry_query(session: Session, actor: Employee):
 
 def _serialize_preview(payload: dict) -> dict:
     return json.loads(json.dumps(payload, default=str))
+
+
+REPORT_COLUMNS = [
+    "entry_id", "employee_id", "employee_name", "project_id", "project_name",
+    "work_date", "hours", "status", "description",
+]
+
+
+def _report_rows(entries: list[TimeEntry]) -> list[dict[str, str | int]]:
+    """Normalize scoped ORM records once for every downloadable format."""
+
+    return [
+        {
+            "entry_id": entry.id,
+            "employee_id": entry.employee_id,
+            "employee_name": entry.employee.name,
+            "project_id": entry.project_id,
+            "project_name": entry.project.name,
+            "work_date": entry.work_date.isoformat(),
+            "hours": str(entry.hours),
+            "status": entry.status,
+            "description": entry.description,
+        }
+        for entry in entries
+    ]
 
 
 def _pending_action(
@@ -543,39 +576,87 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
             end_date,
         )
         output = StringIO()
-        fieldnames = [
-            "entry_id",
-            "employee_id",
-            "employee_name",
-            "project_id",
-            "project_name",
-            "work_date",
-            "hours",
-            "status",
-            "description",
-        ]
-        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer = csv.DictWriter(output, fieldnames=REPORT_COLUMNS)
         writer.writeheader()
-        writer.writerows(
-            {
-                "entry_id": entry.id,
-                "employee_id": entry.employee_id,
-                "employee_name": entry.employee.name,
-                "project_id": entry.project_id,
-                "project_name": entry.project.name,
-                "work_date": entry.work_date.isoformat(),
-                "hours": str(entry.hours),
-                "status": entry.status,
-                "description": entry.description,
-            }
-            for entry in entries
-        )
+        writer.writerows(_report_rows(entries))
         filename = f"acmeworks-time-entries-{start_date or 'all'}-{end_date or 'all'}.csv"
         return Response(
             content=output.getvalue(),
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    @app.get("/reports/time-entries.xlsx", tags=["reports"])
+    def time_entries_xlsx(
+        session: SessionDep,
+        actor: ActorDep,
+        employee_id: int | None = None,
+        project_id: int | None = None,
+        entry_status: str | None = Query(default=None, alias="status"),
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> Response:
+        """Export scoped records as a real workbook with stable columns."""
+
+        entries = list_time_entries(session, actor, employee_id, project_id, entry_status, start_date, end_date)
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Time Entries"
+        sheet.append(REPORT_COLUMNS)
+        for row in _report_rows(entries):
+            sheet.append([row[column] for column in REPORT_COLUMNS])
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        for cell in sheet[1]:
+            header_font = copy(cell.font)
+            header_font.bold = True
+            cell.font = header_font
+        buffer = BytesIO()
+        workbook.save(buffer)
+        filename = f"acmeworks-time-entries-{start_date or 'all'}-{end_date or 'all'}.xlsx"
+        return Response(
+            content=buffer.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/reports/time-entries.pdf", tags=["reports"])
+    def time_entries_pdf(
+        session: SessionDep,
+        actor: ActorDep,
+        employee_id: int | None = None,
+        project_id: int | None = None,
+        entry_status: str | None = Query(default=None, alias="status"),
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> Response:
+        """Render a printable scoped report; it contains no hidden global data."""
+
+        entries = list_time_entries(session, actor, employee_id, project_id, entry_status, start_date, end_date)
+        rows = _report_rows(entries)
+        buffer = BytesIO()
+        pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+        document = SimpleDocTemplate(buffer, pagesize=landscape(A4), leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
+        styles = getSampleStyleSheet()
+        title = styles["Title"]
+        title.fontName = "STSong-Light"
+        story = [Paragraph("AcmeWorks Time Entry Report", title), Spacer(1, 12)]
+        table_data = [["Date", "Employee", "Project", "Hours", "Status", "Description"]]
+        table_data.extend([[row["work_date"], row["employee_name"], row["project_name"], row["hours"], row["status"], row["description"]] for row in rows])
+        table = Table(table_data, repeatRows=1, colWidths=[68, 92, 80, 45, 62, 310])
+        table.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, -1), "STSong-Light"),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#24372f")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#a7b6ae")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3f6f4")]),
+        ]))
+        story.append(table)
+        document.build(story)
+        filename = f"acmeworks-time-entries-{start_date or 'all'}-{end_date or 'all'}.pdf"
+        return Response(content=buffer.getvalue(), media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
     @app.get("/audit-events", tags=["audit"])
     def audit_events(

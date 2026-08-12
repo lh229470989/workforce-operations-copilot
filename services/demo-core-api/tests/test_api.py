@@ -487,3 +487,20 @@ def test_general_csv_export_reuses_role_scope(client, employee_headers):
     assert response.status_code == 200
     assert "Jamie Rivera" in response.text
     assert "Refined analytics workspace prototype" not in response.text
+
+
+def test_xlsx_and_pdf_exports_reuse_role_scope(client, employee_headers):
+    from io import BytesIO
+    from openpyxl import load_workbook
+
+    workbook_response = client.get("/reports/time-entries.xlsx", headers=employee_headers)
+    assert workbook_response.status_code == 200
+    workbook = load_workbook(BytesIO(workbook_response.content), read_only=True)
+    values = list(workbook["Time Entries"].values)
+    assert values[0][0] == "entry_id"
+    assert {row[2] for row in values[1:]} == {"Jamie Rivera"}
+
+    pdf_response = client.get("/reports/time-entries.pdf", headers=employee_headers)
+    assert pdf_response.status_code == 200
+    assert pdf_response.content.startswith(b"%PDF")
+    assert b"Morgan Lee" not in pdf_response.content

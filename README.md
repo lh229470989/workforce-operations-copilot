@@ -4,7 +4,7 @@ A secure, self-hosted demo of an AI copilot for internal operations. It answers 
 
 ## Status
 
-The portfolio demo is implemented and runs as a three-service Docker Compose
+The portfolio demo is implemented and runs as a four-service Docker Compose
 stack:
 
 - `services/demo-core-api` provides the synthetic workforce system.
@@ -13,6 +13,8 @@ stack:
   batch time drafting.
 - `apps/web` provides the chat workspace, tool-event cards, charts, demo-role
   switching, live SSE agent status, and an explicit confirmation card.
+- `services/acmeworks-mcp` exposes scoped reads, resources, prompts, and
+  preview-only writes over MCP 2.0 Streamable HTTP.
 - `knowledge-base` contains original fictional policies used by a local
   evidence-threshold retriever with structured citations.
 - Release assurance includes 120 authored Agent/RAG/security benchmark cases,
@@ -31,7 +33,7 @@ agent. With no key, the same stack remains available as an explicitly labeled
 
 Then open `http://localhost:3000` for the demo workspace,
 `http://localhost:8000/docs` for the AI API, or `http://localhost:8001/docs`
-for the Core API. See
+for the Core API. MCP clients connect to `http://localhost:8002/mcp`. See
 [`services/demo-core-api/README.md`](services/demo-core-api/README.md) for demo
 personas and write-confirmation examples, and
 [`services/ai-api/README.md`](services/ai-api/README.md) for chat tools and
@@ -61,11 +63,16 @@ model configuration. Web verification steps are in
   dry-run and confirmation.
 - Render role-scoped time entries and report downloads as trusted structured
   UI instead of model-authored Markdown or links.
+- Render employees, projects, project members, approval queues, and explicit
+  memories as structured cards/tables; export scoped XLSX and printable PDF.
+- Use natural-language memory commands with the same dry-run and explicit
+  confirmation boundary as workforce writes.
 
 ## Architecture
 
 ```text
 Next.js web app → FastAPI AI API → tools / RAG / policy checks → Demo Core API + SQLite
+MCP client → AcmeWorks MCP (preview-only writes) ──────────────┘
 ```
 
 The Next.js app proxies requests server-side to the LangGraph-based AI API and
@@ -95,6 +102,7 @@ python3 scripts/security_scan.py
 
 cd services/demo-core-api && pytest
 cd services/ai-api && pytest
+cd services/acmeworks-mcp && pytest
 cd apps/web && npm test && npm run typecheck && npm run build
 cd apps/web && npm run test:e2e
 

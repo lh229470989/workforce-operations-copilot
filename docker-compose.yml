@@ -46,6 +46,22 @@ services:
       timeout: 3s
       retries: 5
 
+  acmeworks-mcp:
+    build:
+      context: ./services/acmeworks-mcp
+    environment:
+      DEMO_CORE_API_BASE_URL: http://demo-core-api:8000
+    ports:
+      - "8002:8000"
+    depends_on:
+      demo-core-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   web:
     build:
       context: ./apps/web

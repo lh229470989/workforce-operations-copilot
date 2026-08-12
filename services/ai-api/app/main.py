@@ -100,6 +100,7 @@ def create_app(
         composer=selected_composer,
         knowledge_base=policies,
         today_provider=resolved_today_provider,
+        memory_store=memory,
     )
 
     @asynccontextmanager

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Callable, TypedDict
 
@@ -14,6 +14,7 @@ from .schemas import (
     ChatResponse,
     ConfirmationCard,
     ExecutionResult,
+    MemoryCreateRequest,
     PlannerContext,
 )
 
@@ -35,6 +36,7 @@ def build_agent(
     composer: ResponseComposer | None = None,
     knowledge_base: PolicyKnowledgeBase | None = None,
     today_provider: Callable[[], date] = date.today,
+    memory_store=None,
 ):
     read_queries = ReadQueryRegistry(core)
     response_composer = composer or LocalComposer()
@@ -52,6 +54,62 @@ def build_agent(
     async def execute_node(state: AgentState) -> dict[str, ExecutionResult]:
         plan = state["plan"]
         actor_id = state["actor_id"]
+        if plan.intent == "list_memories":
+            records = await memory_store.list_memories(actor_id)
+            return {"result": ExecutionResult(
+                message=f"I found {len(records)} explicit memories for your demo identity.",
+                tool_events=[tool_event("list_structured_memories", {}, {"count": len(records)})],
+                data={"type": "structured_memories", "rows": records},
+            )}
+
+        if plan.intent == "remember_memory":
+            if not plan.memory_category or not plan.memory_value:
+                return {"result": ExecutionResult(message="Tell me the exact non-sensitive preference you want me to remember.")}
+            try:
+                validated_memory = MemoryCreateRequest(
+                    category=plan.memory_category,
+                    value=plan.memory_value,
+                )
+                preview = await memory_store.prepare_memory(
+                    actor_id,
+                    "create",
+                    validated_memory.model_dump(mode="json"),
+                )
+            except ValueError as exc:
+                return {"result": ExecutionResult(message=str(exc))}
+            return {"result": ExecutionResult(
+                message="I prepared this memory, but have not saved it. Review and explicitly confirm it.",
+                tool_events=[tool_event("prepare_structured_memory", {"category": plan.memory_category}, preview["preview"])],
+                confirmation=ConfirmationCard(
+                    action=preview["action"],
+                    preview=preview["preview"],
+                    confirmation_token=preview["confirmation_token"],
+                    expires_at=datetime.fromtimestamp(preview["expires_at"], UTC),
+                    confirm_path=f"/memories/actions/{preview['confirmation_token']}/confirm",
+                ),
+            )}
+
+        if plan.intent == "forget_memory":
+            records = await memory_store.list_memories(actor_id)
+            query = (plan.memory_value or "").casefold().strip()
+            matches = [record for record in records if query and (query == record["id"].casefold() or query in record["value"].casefold())]
+            if len(matches) != 1:
+                return {"result": ExecutionResult(
+                    message="Name one uniquely matching memory value to forget." if matches else "I could not find a uniquely matching memory in your scope.",
+                    data={"type": "structured_memories", "rows": records},
+                )}
+            preview = await memory_store.prepare_memory(actor_id, "delete", {}, memory_id=matches[0]["id"])
+            return {"result": ExecutionResult(
+                message="I prepared this deletion, but have not removed the memory. Review and explicitly confirm it.",
+                tool_events=[tool_event("prepare_memory_deletion", {"memory_id": matches[0]["id"]}, preview["preview"])],
+                confirmation=ConfirmationCard(
+                    action=preview["action"],
+                    preview=preview["preview"],
+                    confirmation_token=preview["confirmation_token"],
+                    expires_at=datetime.fromtimestamp(preview["expires_at"], UTC),
+                    confirm_path=f"/memories/actions/{preview['confirmation_token']}/confirm",
+                ),
+            )}
         if plan.intent in {
             "greeting",
             "general_chat",

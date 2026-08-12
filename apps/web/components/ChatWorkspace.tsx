@@ -9,9 +9,14 @@ import type {
   ComparisonData,
   Confirmation,
   ConversationItem,
+  EmployeeData,
+  PendingApprovalData,
   PolicyCitation,
+  ProjectData,
+  ProjectMemberData,
   ReportExportData,
   SafeAnalyticsData,
+  StructuredMemoryData,
   TimeEntryRow,
   TimeEntrySuggestionData,
   ToolEvent,
@@ -85,6 +90,48 @@ function TimeEntryTable({ rows }: { rows: TimeEntryRow[] }) {
       )}
     </section>
   );
+}
+
+function hasRows<T extends string>(data: unknown, type: T): data is { type: T; rows: Array<Record<string, unknown>> } {
+  return typeof data === "object" && data !== null && "type" in data && data.type === type && "rows" in data && Array.isArray(data.rows);
+}
+
+function DirectoryCards({ data }: { data: EmployeeData | ProjectData }) {
+  if (data.type === "employees") {
+    return <section className="entity-grid" aria-label="employees">
+      <span className="section-label">EMPLOYEES · {data.rows.length}</span>
+      <div className="entity-card-grid">{data.rows.map((row) => <article className="entity-card" key={row.id}>
+        <strong>{row.name}</strong><span>{row.title}</span><small>{row.role} · {row.email}</small>
+      </article>)}</div>
+    </section>;
+  }
+  return <section className="entity-grid" aria-label={data.type}>
+    <span className="section-label">{data.type.toUpperCase()} · {data.rows.length}</span>
+    <div className="entity-card-grid">{data.rows.map((row) => (
+      <article className="entity-card" key={row.id}>
+        <strong>{row.name}</strong>
+        <span>{row.code} · {row.status}</span><small>{row.description}</small>
+      </article>
+    ))}</div>
+  </section>;
+}
+
+function ProjectMemberTable({ data }: { data: ProjectMemberData }) {
+  return <section className="comparison-table" aria-label="Project members">
+    <span className="section-label">{data.project_name.toUpperCase()} MEMBERS · {data.rows.length}</span>
+    <table><thead><tr><th>Employee</th><th>Project role</th><th>ID</th></tr></thead>
+      <tbody>{data.rows.map((row) => <tr key={row.id}><td>{row.employee_name}</td><td>{row.project_role}</td><td>{row.employee_id}</td></tr>)}</tbody>
+    </table>
+  </section>;
+}
+
+function StructuredMemoryList({ data }: { data: StructuredMemoryData }) {
+  return <section className="comparison-table" aria-label="Structured memories">
+    <span className="section-label">EXPLICIT MEMORIES · {data.rows.length}</span>
+    {data.rows.length === 0 ? <p>No saved memories.</p> : <table><thead><tr><th>Category</th><th>Value</th></tr></thead>
+      <tbody>{data.rows.map((row) => <tr key={row.id}><td>{row.category.replaceAll("_", " ")}</td><td>{row.value}</td></tr>)}</tbody>
+    </table>}
+  </section>;
 }
 
 function isWeeklyReportData(data: unknown): data is WeeklyReportData {
@@ -175,7 +222,11 @@ function ReportExport({ data, actorId }: { data: ReportExportData; actorId: numb
     <section className="weekly-report" aria-label="Report export">
       <div><span className="eyebrow">ROLE-SCOPED EXPORT</span><strong>Time-entry CSV</strong></div>
       <div><b>{data.row_count}</b><span>matching rows</span></div>
-      <a href={`/api/reports/time-entries.csv?${params}`}>Download CSV</a>
+      <div className="report-downloads">
+        <a href={`/api/reports/time-entries.csv?${params}`}>Download CSV</a>
+        <a href={`/api/reports/time-entries.xlsx?${params}`}>Download XLSX</a>
+        <a href={`/api/reports/time-entries.pdf?${params}`}>Download PDF</a>
+      </div>
     </section>
   );
 }
@@ -316,8 +367,11 @@ function ConfirmationCard({
   async function confirm() {
     setState("working");
     setError("");
+    const confirmationEndpoint = confirmation.action.endsWith("_memory")
+      ? `/api/memories/actions/${confirmation.confirmation_token}/confirm`
+      : `/api/actions/${confirmation.confirmation_token}/confirm`;
     const response = await fetch(
-      `/api/actions/${confirmation.confirmation_token}/confirm`,
+      confirmationEndpoint,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -338,7 +392,9 @@ function ConfirmationCard({
         ? `Confirmed. ${count} time entries were created atomically and audited.`
         : confirmation.action === "decide_time_entry"
           ? `Confirmed. The time entry was ${decidedStatus ?? "decided"} and the approval was audited.`
-          : "Confirmed. The time entry was created and audited.",
+          : confirmation.action.endsWith("_memory")
+            ? "Confirmed. Your explicit structured memory was updated."
+            : "Confirmed. The time entry was created and audited.",
     );
   }
 
@@ -365,7 +421,11 @@ function ConfirmationCard({
                     ? "Review time entry deletion"
                     : confirmation.action === "transition_time_entry"
                       ? "Review status transition"
-                : "Review time entry draft"}
+                : confirmation.action === "create_memory"
+                  ? "Review structured memory"
+                  : confirmation.action === "delete_memory"
+                    ? "Review memory deletion"
+                    : "Review time entry draft"}
           </h3>
         </div>
         <span className="dry-run-badge">DRY RUN</span>
@@ -440,6 +500,11 @@ function AssistantResponse({
         </div>
         <p className="assistant-message">{response.message}</p>
         {isTimeEntryRows(response.data) && <TimeEntryTable rows={response.data} />}
+        {hasRows(response.data, "employees") && <DirectoryCards data={response.data as EmployeeData} />}
+        {hasRows(response.data, "projects") && <DirectoryCards data={response.data as ProjectData} />}
+        {hasRows(response.data, "project_members") && <ProjectMemberTable data={response.data as ProjectMemberData} />}
+        {hasRows(response.data, "pending_approvals") && <TimeEntryTable rows={(response.data as PendingApprovalData).rows} />}
+        {hasRows(response.data, "structured_memories") && <StructuredMemoryList data={response.data as StructuredMemoryData} />}
         {response.citations && response.citations.length > 0 && (
           <CitationList citations={response.citations} />
         )}

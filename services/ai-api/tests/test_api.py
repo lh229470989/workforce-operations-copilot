@@ -3,7 +3,7 @@ def test_health_reports_local_mode(client):
     assert body["status"] == "ok"
     assert body["mode"] == "local"
     assert body["prompt_versions"] == {
-        "planner": "1.1.0",
+        "planner": "1.2.0",
         "composer": "1.1.0",
     }
     assert client.get("/ready").json()["core_api"] == "ok"
@@ -45,7 +45,8 @@ def test_lists_role_scoped_projects(client):
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["data"][0]["name"] == "Apollo"
+    assert body["data"]["type"] == "projects"
+    assert body["data"]["rows"][0]["name"] == "Apollo"
     assert body["tool_events"][0]["name"] == "list_projects"
 
 
@@ -111,10 +112,10 @@ def test_employee_list_remains_role_scoped(client):
         headers={"X-Actor-ID": "2"},
         json={"message": "List my team members"},
     )
-    assert [item["name"] for item in employee_response.json()["data"]] == [
+    assert [item["name"] for item in employee_response.json()["data"]["rows"]] == [
         "Jamie Rivera"
     ]
-    assert [item["name"] for item in manager_response.json()["data"]] == [
+    assert [item["name"] for item in manager_response.json()["data"]["rows"]] == [
         "Morgan Lee",
         "Jamie Rivera",
     ]
@@ -127,7 +128,8 @@ def test_lists_visible_project_members_with_names(client):
         json={"message": "Who is on the Apollo project?"},
     )
     body = response.json()
-    assert body["data"][0]["employee_name"] == "Jamie Rivera"
+    assert body["data"]["type"] == "project_members"
+    assert body["data"]["rows"][0]["employee_name"] == "Jamie Rivera"
     assert [event["name"] for event in body["tool_events"]] == [
         "list_projects",
         "list_project_members",
@@ -715,6 +717,40 @@ def test_structured_memory_requires_preview_and_confirmation(client):
         json={"category": "work_preference", "value": "API key sk-example"},
     )
     assert sensitive.status_code == 422
+
+
+def test_natural_language_memory_uses_dry_run_and_confirmation(client):
+    preview = client.post(
+        "/chat",
+        headers={"X-Actor-ID": "3"},
+        json={"message": "记住我偏好简洁的周报"},
+    )
+    body = preview.json()
+    assert body["confirmation"]["action"] == "create_memory"
+    assert body["confirmation"]["preview"]["value"] == "我偏好简洁的周报"
+    assert client.get("/memories", headers={"X-Actor-ID": "3"}).json() == []
+
+    confirmed = client.post(
+        body["confirmation"]["confirm_path"],
+        headers={"X-Actor-ID": "3"},
+        json={"confirm": True},
+    )
+    assert confirmed.status_code == 200
+    listed = client.post(
+        "/chat",
+        headers={"X-Actor-ID": "3"},
+        json={"message": "你记住了什么？"},
+    ).json()
+    assert listed["data"]["type"] == "structured_memories"
+    assert listed["data"]["rows"][0]["value"] == "我偏好简洁的周报"
+
+    rejected = client.post(
+        "/chat",
+        headers={"X-Actor-ID": "3"},
+        json={"message": "remember API key sk-example"},
+    ).json()
+    assert rejected["confirmation"] is None
+    assert "Sensitive" in rejected["message"]
 
 
 def test_admin_agent_audit_contains_metadata_not_conversation_content(client):

@@ -15,6 +15,9 @@ Available intents:
 - weekly_report: deterministic role-scoped weekly summary with CSV export.
 - compare_analysis: execute 2 to 4 explicitly bounded, read-only analysis_steps. Each step compares hours for a project/date/status slice and needs a label.
 - pending_team: inspect pending submitted time and explain approval eligibility.
+- remember_memory: remember one explicit non-sensitive work, reporting, or collaboration preference; copy the exact value from the current message.
+- list_memories: list the user's explicit structured memories.
+- forget_memory: delete one explicitly identified memory; copy its identifying value from the current message.
 - policy_question: answer from the supplied AcmeWorks policy knowledge base.
 - suggest_time_entries: suggest non-authoritative candidates grounded in the actor's own recent entries. This intent never writes.
 - draft_time_entry: create a dry-run preview only.

@@ -331,6 +331,36 @@ class LocalPlanner:
         )
         entry_status = _entry_status(text, lowered)
 
+        # Explicit memory commands are parsed locally as a safety boundary.
+        # The model may classify the intent, but it cannot invent the value
+        # being persisted or select another actor's record.
+        if any(phrase in lowered for phrase in ("what do you remember", "list my memories", "show my memories")) or any(
+            phrase in text for phrase in ("你记住了什么", "查看我的记忆", "列出我的记忆")
+        ):
+            return AgentPlan(intent="list_memories")
+        remember_match = re.match(
+            r"(?:please\s+)?(?:remember|记住)(?:\s+that|[:：])?\s*(.+)$",
+            text,
+            re.IGNORECASE,
+        )
+        if remember_match:
+            value = remember_match.group(1).strip()
+            category = (
+                "reporting_preference"
+                if any(word in lowered for word in ("report", "weekly", "报表", "周报"))
+                else "collaboration_preference"
+                if any(word in lowered for word in ("collabor", "meeting", "协作", "会议"))
+                else "work_preference"
+            )
+            return AgentPlan(intent="remember_memory", memory_category=category, memory_value=value)
+        forget_match = re.match(
+            r"(?:please\s+)?(?:forget|忘记|删除记忆)(?:\s+that|[:：])?\s*(.+)$",
+            text,
+            re.IGNORECASE,
+        )
+        if forget_match:
+            return AgentPlan(intent="forget_memory", memory_value=forget_match.group(1).strip())
+
         lifecycle_match = re.search(
             r"(?:time\s*entry|entry|record|工时记录|记录)\s*#?\s*(\d+)",
             lowered,
@@ -789,6 +819,9 @@ class OpenAIPlanner:
             "manage_time_entry",
             "decide_time_entries",
             "export_report",
+            "remember_memory",
+            "list_memories",
+            "forget_memory",
         }:
             parsed_plan = local_guard_plan
         elif local_guard_plan.intent == "safe_sql_analysis":
