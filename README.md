@@ -4,7 +4,8 @@ A secure, self-hosted demo of an AI copilot for internal operations. It answers 
 
 ## Status
 
-The first full-stack demo milestone is implemented:
+The portfolio demo is implemented and runs as a three-service Docker Compose
+stack:
 
 - `services/demo-core-api` provides the synthetic workforce system.
 - `services/ai-api` provides LLM-first, role-aware LangGraph orchestration with
@@ -14,8 +15,9 @@ The first full-stack demo milestone is implemented:
   switching, live SSE agent status, and an explicit confirmation card.
 - `knowledge-base` contains original fictional policies used by a local
   evidence-threshold retriever with structured citations.
-- Release assurance includes an authored evaluation set, request metrics,
-  security headers, a publication scan, and CI verification.
+- Release assurance includes 120 authored Agent/RAG/security benchmark cases,
+  metadata-only Agent audit, request metrics, security headers, publication
+  scans, and Playwright browser E2E in CI.
 
 Start the implemented service with:
 
@@ -54,6 +56,11 @@ model configuration. Web verification steps are in
 - Demonstrate role-aware access for employee, manager, and admin personas.
 - Stream model text deltas, export scoped time slices, inspect admin audit
   metadata, hot-reload policies, and keep user-controlled structured preferences.
+- Validate duplicate and cumulative daily hours at preview and confirmation.
+- Manage explicit, non-sensitive structured memories through actor-bound
+  dry-run and confirmation.
+- Render role-scoped time entries and report downloads as trusted structured
+  UI instead of model-authored Markdown or links.
 
 ## Architecture
 
@@ -89,6 +96,7 @@ python3 scripts/security_scan.py
 cd services/demo-core-api && pytest
 cd services/ai-api && pytest
 cd apps/web && npm test && npm run typecheck && npm run build
+cd apps/web && npm run test:e2e
 
 docker compose up --build -d
 docker compose ps
@@ -101,3 +109,9 @@ messages or actor attributes.
 
 Release controls are documented in [SECURITY.md](SECURITY.md) and
 [docs/release-checklist.md](docs/release-checklist.md).
+
+## License
+
+Released under the [MIT License](LICENSE). All AcmeWorks people, organizations,
+projects, policies, records, and metrics are fictional and authored for this
+standalone demonstration.
