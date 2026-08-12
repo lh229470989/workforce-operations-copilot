@@ -1,99 +1,128 @@
 # Workforce Operations Copilot
 
-A secure, self-hosted demo of an AI copilot for internal operations. It answers policy questions, retrieves workforce data, drafts time entries, and performs role-aware actions with an explicit approval step.
+**A review-first AI automation demo for small and growing teams.** It turns
+plain-language workforce requests into role-scoped reads, grounded answers,
+and inspectable write proposals—without letting a model silently change
+business records.
 
-## Status
+The business problem is simple: internal operations requests arrive in
+unstructured language, but the resulting access decisions and writes still
+need to be correct, reviewable, and easy to hand over. This project shows how
+to connect those two worlds with a complete web app, API boundary, audit trail,
+tests, and local deployment path.
 
-The portfolio demo is implemented and runs as a four-service Docker Compose
-stack:
+![Desktop welcome screen with five guided demo prompts](docs/assets/portfolio/01-desktop-welcome.jpg)
 
-- `services/demo-core-api` provides the synthetic workforce system.
-- `services/ai-api` provides LLM-first, role-aware LangGraph orchestration with
-  grounded answer generation, read-only tools, and dry-run-only single or
-  batch time drafting.
-- `apps/web` provides the chat workspace, tool-event cards, charts, demo-role
-  switching, live SSE agent status, and an explicit confirmation card.
-- `services/acmeworks-mcp` exposes scoped reads, resources, prompts, and
-  preview-only writes over MCP 2.0 Streamable HTTP.
-- `knowledge-base` contains original fictional policies used by a local
-  evidence-threshold retriever with structured citations.
-- Release assurance includes 120 authored Agent/RAG/security benchmark cases,
-  metadata-only Agent audit, request metrics, security headers, publication
-  scans, and Playwright browser E2E in CI.
+## See the value in 60 seconds
 
-Start the implemented service with:
+| Demo path | Try this | What it proves |
+| --- | --- | --- |
+| Grounded policy answer | `What is the weekly time submission deadline policy?` | The answer includes inspectable fictional policy sources instead of unsupported model text. |
+| Permission boundary | As Jamie, ask `Can I approve my team's pending time entries?` | The employee is refused the manager action while still receiving useful, role-scoped information. |
+| Review-first write | `Draft 1 hour on Apollo for 2026-12-18, description: portfolio demo` | The system returns a dry-run and server-issued confirmation step; nothing is written before a separate click. |
+
+[Open the 60–90 second walkthrough script and shot list](docs/portfolio-demo.md).
+A public video or hosted-demo link will be added only when that asset is live;
+the README does not point to a placeholder deployment.
+
+## What a client can verify
+
+- **Natural language to workflow:** policy lookup, role-scoped reporting,
+  structured analytics, exports, and time-entry lifecycle actions.
+- **Visible safety boundaries:** employee, manager, and admin scopes are
+  enforced server-side; writes require dry-run, expiring confirmation token,
+  re-authorization, and an audit record.
+- **Inspectable integration surface:** FastAPI services, server-side Next.js
+  proxying, MCP 2.0 Streamable HTTP, health endpoints, and Docker Compose.
+- **Delivery evidence:** 120 authored Agent/RAG/security benchmark cases,
+  Python and React tests, Playwright browser checks, container builds,
+  dependency audit, and publication security scan in CI.
+- **Measurable operation:** request ID, route, status, latency, intent, and tool
+  metadata are observable without logging chat messages or actor attributes.
+
+The bounded scale is intentional: three synthetic personas, preview-only MCP
+writes, up to 10 atomic time-entry drafts, and up to 20 atomic manager
+decisions. These limits make the demo auditable rather than pretending to be
+an unrestricted production platform.
+
+## Product evidence
+
+| Grounded answers | Role-aware refusal |
+| --- | --- |
+| ![Policy answer with cited fictional sources](docs/assets/portfolio/02-grounded-policy.jpg) | ![Employee refused a manager-only approval action](docs/assets/portfolio/03-role-refusal.jpg) |
+| Review-first write | Role-scoped analytics |
+| ![Dry-run card with a separate confirm button](docs/assets/portfolio/04-dry-run-confirmation.jpg) | ![Monthly hours chart and tool events](docs/assets/portfolio/05-role-scoped-chart.jpg) |
+
+The responsive welcome experience is also verified at `390 × 844`:
+[view the mobile screenshot](docs/assets/portfolio/06-mobile-welcome.jpg).
+All people, organizations, policies, projects, and records shown here are
+fictional.
+
+## My implementation scope
+
+I designed and implemented this standalone showcase end to end: product and
+safety boundaries, synthetic data model, FastAPI Core and AI services,
+LangGraph orchestration, grounded retrieval, write-confirmation protocol,
+MCP server, Next.js interface, observability, evaluations, tests, containers,
+CI, and documentation. It is a fresh portfolio codebase, not a copy of an
+employer or client system.
+
+## Run the demo
 
 ```bash
+cp .env.example .env
 docker compose up --build
 ```
 
-Copy `.env.example` to `.env` and set `OPENAI_API_KEY` to run the real LLM
-agent. With no key, the same stack remains available as an explicitly labeled
-`local fallback`; it does not pretend that deterministic routing is a model.
+Then open:
 
-Then open `http://localhost:3000` for the demo workspace,
-`http://localhost:8000/docs` for the AI API, or `http://localhost:8001/docs`
-for the Core API. MCP clients connect to `http://localhost:8002/mcp`. See
-[`services/demo-core-api/README.md`](services/demo-core-api/README.md) for demo
-personas and write-confirmation examples, and
-[`services/ai-api/README.md`](services/ai-api/README.md) for chat tools and
-model configuration. Web verification steps are in
-[`apps/web/README.md`](apps/web/README.md).
+- Web workspace: `http://localhost:3000`
+- AI API documentation: `http://localhost:8000/docs`
+- Demo Core API documentation: `http://localhost:8001/docs`
+- MCP endpoint: `http://localhost:8002/mcp`
 
-## Implemented demo
+Set `OPENAI_API_KEY` in `.env` to use the configured model. Without a key, the
+stack remains usable as an explicitly labeled `local fallback`; deterministic
+routing is never presented as model output. More detail is in the
+[local development guide](docs/local-development.md).
 
-- Ask policy questions with cited knowledge-base sources.
-- Query synthetic projects and time entries in natural language.
-- Review personal time-entry suggestions derived from recent fictional work.
-- Draft a time entry, inspect a dry-run preview, then explicitly approve it.
-- Draft up to 10 time entries as one atomic dry-run and confirmation.
-- Edit, delete, submit, or withdraw an exact entry through the same two-step boundary.
-- Let an authorized manager propose approval or rejection for an exact entry,
-  then confirm it through the same separate write boundary.
-- Batch-decide up to 20 submitted entries after atomic scope validation.
-- Compare monthly project hours with a chart.
-- Compare 2–4 authorized project or date slices through a validated multi-tool plan.
-- Ask compound policy questions with hybrid retrieval and evidence coverage.
-- Run declarative analytics through a role-scoped, query-only SQL compiler.
-- Demonstrate role-aware access for employee, manager, and admin personas.
-- Stream model text deltas, export scoped time slices, inspect admin audit
-  metadata, hot-reload policies, and keep user-controlled structured preferences.
-- Validate duplicate and cumulative daily hours at preview and confirmation.
-- Manage explicit, non-sensitive structured memories through actor-bound
-  dry-run and confirmation.
-- Render role-scoped time entries and report downloads as trusted structured
-  UI instead of model-authored Markdown or links.
-- Render employees, projects, project members, approval queues, and explicit
-  memories as structured cards/tables; export scoped XLSX and printable PDF.
-- Use natural-language memory commands with the same dry-run and explicit
-  confirmation boundary as workforce writes.
+## Implemented capabilities
 
-## Architecture
+- Cited answers over original fictional workforce policies.
+- Role-scoped employee, project, time-entry, approval, report, and analytics reads.
+- Reviewable suggestions derived from a user's recent fictional work.
+- Dry-run and explicit confirmation for create, batch create, edit, delete,
+  submit, withdraw, approve, reject, preference, and structured-memory writes.
+- Atomic scope validation for batches and duplicate/cumulative-hours checks at
+  both preview and confirmation.
+- Structured tables, cards, charts, CSV/XLSX/PDF exports, live SSE progress,
+  and metadata-only admin audit views.
+- Actor-bound short sessions, privacy controls, bounded history, explicit
+  memories, and hot-reloadable knowledge documents.
+- Read/resource/prompt MCP operations plus preview-only write tools.
+
+## Architecture and trust boundary
 
 ```text
-Next.js web app → FastAPI AI API → tools / RAG / policy checks → Demo Core API + SQLite
-MCP client → AcmeWorks MCP (preview-only writes) ──────────────┘
+Next.js web → FastAPI AI API → LangGraph tools / retrieval / policy checks
+                                      ↓
+MCP client → AcmeWorks MCP ───→ Demo Core API + SQLite
+             preview only       authorization + confirmation + audit
 ```
 
-The Next.js app proxies requests server-side to the LangGraph-based AI API and
-the synthetic workforce Core API so the browser never becomes the
-authorization boundary.
+The browser and the model are not authorization boundaries. Every protected
+operation is checked by the Core API. A write proposal does not become a write
+unless the user separately submits its actor-bound token and the server
+rechecks authorization and business rules.
 
-架构说明从 [`docs/README.md`](docs/README.md) 开始，包含：
+Start with the [documentation index](docs/README.md), or go directly to:
 
-- [`系统架构总览`](docs/system-overview.md)
-- [`Agent 运行时与 LLM 调用链`](docs/agent-runtime.md)
-- [`权限、安全与上下文管理`](docs/security-and-context.md)
-- [`本地运行与调试`](docs/local-development.md)
-
-## Safety boundary
-
-This is a fresh showcase project, not a public copy of an internal system. Use only fictional data and a new Git history. Before publishing, run a secret scan and manually review all docs, screenshots, and commit history.
-
-## Development plan
-
-See [PROJECT_BRIEF.md](PROJECT_BRIEF.md) for scope and next steps, and
-[docs/architecture.md](docs/architecture.md) for target boundaries.
+- [System overview](docs/system-overview.md)
+- [Agent runtime and model call chain](docs/agent-runtime.md)
+- [Permissions, security, and context](docs/security-and-context.md)
+- [MCP and connectors](docs/mcp-and-connectors.md)
+- [Evaluation method](docs/evaluation.md)
+- [Observability](docs/observability.md)
 
 ## Verification
 
@@ -110,16 +139,25 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Operational endpoints are available at `http://localhost:8000/health`,
-`/ready`, `/observability`, and `/metrics`. Request telemetry contains route,
-status, latency, request ID, and planned intent only; it does not record chat
-messages or actor attributes.
+CI runs the publication scan, dependency audit, all service and web tests,
+production build, container build, and browser E2E suite. Operational endpoints
+include `/health`, `/ready`, `/observability`, and `/metrics`.
 
-Release controls are documented in [SECURITY.md](SECURITY.md) and
-[docs/release-checklist.md](docs/release-checklist.md).
+## Known limits
+
+- The included workforce system and all data are synthetic.
+- This repository currently has no live public demo and no real third-party
+  Calendar, Slack, or Email integration.
+- Authentication is represented by switchable demo personas, not production
+  OIDC/SSO or multi-tenant identity.
+- MCP write tools stop at preview; confirmation stays in the trusted application.
+- Public LLM access is intentionally not offered without budget and abuse controls.
+
+The next evidence-led phases are tracked in the
+[SMB AI automation portfolio roadmap](docs/portfolio-roadmap.md). Release and
+publication controls are documented in [SECURITY.md](SECURITY.md) and the
+[release checklist](docs/release-checklist.md).
 
 ## License
 
-Released under the [MIT License](LICENSE). All AcmeWorks people, organizations,
-projects, policies, records, and metrics are fictional and authored for this
-standalone demonstration.
+Released under the [MIT License](LICENSE).

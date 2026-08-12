@@ -32,6 +32,36 @@ afterEach(() => {
 });
 
 describe("ChatWorkspace", () => {
+  it("does not auto-scroll the empty welcome state", () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    render(<ChatWorkspace />);
+
+    expect(screen.getByRole("heading", { name: "What would you like to know?" })).toBeVisible();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("renders limited Markdown without HTML or actionable model links", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      message: "**Approved steps**\n\n- Inspect `scope`\n- Run:\n\n```sh\necho safe\n```\n\n[Confirm now](https://example.com/action)\n\n<button>Unsafe action</button>",
+      mode: "openai", tool_events: [], data: null, confirmation: null,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const user = userEvent.setup();
+    render(<ChatWorkspace />);
+
+    await user.type(screen.getByLabelText("Message Acme Copilot"), "Show formatted guidance");
+    await user.click(screen.getByRole("button", { name: /Send/i }));
+
+    expect((await screen.findByText("Approved steps")).tagName).toBe("STRONG");
+    expect(screen.getByText("scope").tagName).toBe("CODE");
+    expect(screen.getByText("echo safe").tagName).toBe("CODE");
+    expect(screen.getByText("Confirm now")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Confirm now" })).not.toBeInTheDocument();
+    expect(screen.getByText("Unsafe action")).toBeInTheDocument();
+    expect(document.querySelector("button button")).toBeNull();
+  });
+
   it("renders time entries as a readable structured table", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       message: "在你当前角色的权限范围内，共找到 1 条工时记录。",

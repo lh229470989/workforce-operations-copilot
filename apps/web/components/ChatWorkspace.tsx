@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { DEMO_PROMPTS, PERSONAS } from "@/lib/personas";
 import type {
   AgentProgressEvent,
@@ -22,6 +23,32 @@ import type {
   ToolEvent,
   WeeklyReportData,
 } from "@/lib/types";
+
+const SAFE_MARKDOWN_ELEMENTS = [
+  "p",
+  "ul",
+  "ol",
+  "li",
+  "strong",
+  "em",
+  "code",
+  "pre",
+  "br",
+];
+
+function SafeMarkdown({ children }: { children: string }) {
+  return (
+    <div className="assistant-message">
+      <ReactMarkdown
+        allowedElements={SAFE_MARKDOWN_ELEMENTS}
+        skipHtml
+        unwrapDisallowed
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 function AgentProgress({ events }: { events: AgentProgressEvent[] }) {
   return (
@@ -498,7 +525,7 @@ function AssistantResponse({
               : ""}
           </span>
         </div>
-        <p className="assistant-message">{response.message}</p>
+        <SafeMarkdown>{response.message}</SafeMarkdown>
         {isTimeEntryRows(response.data) && <TimeEntryTable rows={response.data} />}
         {hasRows(response.data, "employees") && <DirectoryCards data={response.data as EmployeeData} />}
         {hasRows(response.data, "projects") && <DirectoryCards data={response.data as ProjectData} />}
@@ -759,6 +786,7 @@ export function ChatWorkspace() {
   );
 
   useEffect(() => {
+    if (conversation.length === 0) return;
     conversationEndRef.current?.scrollIntoView?.({
       behavior: "smooth",
       block: "end",
@@ -1005,7 +1033,7 @@ export function ChatWorkspace() {
                   <div className="assistant-mark">A</div>
                   <div className="assistant-content">
                     <div className="response-meta"><strong>Acme Copilot</strong><span>LLM agent · streaming</span></div>
-                    <p className="assistant-message">{item.streamingText}<span className="stream-cursor" aria-hidden="true">▍</span></p>
+                    <SafeMarkdown>{item.streamingText}</SafeMarkdown><span className="stream-cursor" aria-hidden="true">▍</span>
                   </div>
                 </div>
               )}

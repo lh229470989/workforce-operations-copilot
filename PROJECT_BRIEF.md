@@ -39,7 +39,7 @@ from scratch for AcmeWorks:
 7. Actor-bound persistent sessions and privacy-controlled preferences.
 8. Coverage-aware hybrid policy retrieval and declarative safe analytics.
 
-## Portfolio roadmap
+## Completed implementation roadmap
 
 1. **Demo Core API** — synthetic workforce records, role-scoped reads,
    dry-runs, confirmations, audit records, tests, and a container.
@@ -63,3 +63,8 @@ from scratch for AcmeWorks:
 
 Milestones 1–8 are implemented. Every write-capable conversation remains a
 proposal until the user separately confirms a server-authorized token.
+
+The next portfolio and market-positioning phases are tracked in
+[`docs/portfolio-roadmap.md`](docs/portfolio-roadmap.md). They focus on SMB AI
+automation, presentation quality, one real integration case, and evidence-led
+specialization rather than adding more unvalidated Agent features.
