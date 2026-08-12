@@ -1,8 +1,8 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 
 class ORMModel(BaseModel):
@@ -70,9 +70,68 @@ class TimeEntryDraftRequest(BaseModel):
     description: str = Field(min_length=1, max_length=500)
 
 
+class TimeEntryBatchDraftRequest(BaseModel):
+    """A bounded batch that remains a single explicit confirmation action."""
+
+    entries: list[TimeEntryDraftRequest] = Field(min_length=1, max_length=10)
+
+
+class TimeEntryUpdateRequest(BaseModel):
+    """Editable fields for an existing draft; status changes use dedicated actions."""
+
+    project_id: int | None = Field(default=None, ge=1)
+    work_date: date | None = None
+    hours: Decimal | None = Field(
+        default=None, gt=0, le=24, max_digits=4, decimal_places=2
+    )
+    description: str | None = Field(default=None, min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def require_change(self):
+        if not self.model_fields_set:
+            raise ValueError("At least one editable field is required")
+        return self
+
+
+class TimeEntrySuggestionOut(BaseModel):
+    """A non-authoritative suggestion grounded in one personal recent entry."""
+
+    project_id: int
+    project_name: str
+    target_date: date
+    suggested_hours: Decimal
+    suggested_description: str
+    based_on_entry_id: int
+    based_on_date: date
+
+
+class SafeAnalyticsQuery(BaseModel):
+    """A declarative analytics request; callers can never supply SQL text."""
+
+    dimension: Literal["project", "status", "employee", "work_date", "month"]
+    metric: Literal["hours", "entry_count"]
+    start_date: date | None = None
+    end_date: date | None = None
+    status: Literal["draft", "submitted", "approved", "rejected"] | None = None
+    project_id: int | None = Field(default=None, ge=1)
+    employee_id: int | None = Field(default=None, ge=1)
+    order: Literal["asc", "desc"] = "desc"
+    limit: int = Field(default=20, ge=1, le=50)
+
+
 class ApprovalDryRunRequest(BaseModel):
     decision: Literal["approved", "rejected"]
     comment: str | None = Field(default=None, max_length=500)
+
+
+class ApprovalBatchDryRunRequest(ApprovalDryRunRequest):
+    entry_ids: list[int] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def require_unique_entries(self):
+        if len(set(self.entry_ids)) != len(self.entry_ids):
+            raise ValueError("entry_ids must be unique")
+        return self
 
 
 class DryRunResponse(BaseModel):
@@ -81,6 +140,13 @@ class DryRunResponse(BaseModel):
     preview: dict
     confirmation_token: str
     expires_at: datetime
+
+    @field_serializer("expires_at")
+    def serialize_expires_at(self, value: datetime) -> str:
+        """Expose unambiguous UTC so browsers do not assume local time."""
+
+        aware = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+        return aware.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 class ConfirmationRequest(BaseModel):

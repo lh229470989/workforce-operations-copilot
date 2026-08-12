@@ -22,6 +22,8 @@ READ_INTENTS = frozenset(
         "hours_by_project",
         "summary",
         "monthly_chart",
+        "weekly_report",
+        "export_report",
         "pending_team",
     }
 )
@@ -100,6 +102,58 @@ class ReadQueryRegistry:
             data=departments,
         )
 
+    async def _handle_weekly_report(
+        self, plan: AgentPlan, actor_id: int
+    ) -> ExecutionResult:
+        report = await self.core.get_weekly_report(actor_id, plan.start_date)
+        data = {"type": "weekly_report", **report}
+        return ExecutionResult(
+            message=(
+                f"Weekly report for {report['week_start']} through "
+                f"{report['week_end']}: {report['total_hours']} hours across "
+                f"{report['entry_count']} entries. A role-scoped CSV is ready."
+            ),
+            tool_events=[
+                tool_event(
+                    "get_weekly_report",
+                    {"week_start": report["week_start"]},
+                    report,
+                )
+            ],
+            data=data,
+        )
+
+    async def _handle_export_report(
+        self, plan: AgentPlan, actor_id: int
+    ) -> ExecutionResult:
+        """Prepare a role-scoped download descriptor for the web client."""
+
+        entries, project, events = await self._filtered_entries(plan, actor_id)
+        if entries is None:
+            return ExecutionResult(
+                message="That project is not available in your authorized scope.",
+                tool_events=events,
+            )
+        filters = {
+            "project_id": project["id"] if project else None,
+            "status": plan.entry_status,
+            "start_date": plan.start_date.isoformat() if plan.start_date else None,
+            "end_date": plan.end_date.isoformat() if plan.end_date else None,
+        }
+        return ExecutionResult(
+            message=(
+                f"Your role-scoped CSV export is ready with {len(entries)} "
+                "matching time entries."
+            ),
+            tool_events=events,
+            data={
+                "type": "report_export",
+                "format": "csv",
+                "row_count": len(entries),
+                "filters": {key: value for key, value in filters.items() if value is not None},
+            },
+        )
+
     async def _handle_list_employees(
         self, _: AgentPlan, actor_id: int
     ) -> ExecutionResult:
@@ -111,7 +165,7 @@ class ReadQueryRegistry:
                 f"{len(employees)} {noun} visible in your role scope: {names}."
             ),
             tool_events=[tool_event("list_employees", {}, employees)],
-            data=employees,
+            data={"type": "employees", "rows": employees},
         )
 
     async def _handle_list_projects(
@@ -122,7 +176,7 @@ class ReadQueryRegistry:
         return ExecutionResult(
             message=f"Your visible projects are: {names}.",
             tool_events=[tool_event("list_projects", {}, projects)],
-            data=projects,
+            data={"type": "projects", "rows": projects},
         )
 
     async def _project_context(
@@ -175,7 +229,12 @@ class ReadQueryRegistry:
                 "within your role scope."
             ),
             tool_events=events,
-            data=enriched,
+            data={
+                "type": "project_members",
+                "project_id": project["id"],
+                "project_name": project["name"],
+                "rows": enriched,
+            },
         )
 
     async def _filtered_entries(
@@ -221,10 +280,24 @@ class ReadQueryRegistry:
             qualifiers.append(project["name"])
         label = f" {' '.join(qualifiers)}" if qualifiers else ""
         noun = "time entry" if len(entries) == 1 else "time entries"
+        project_names = {
+            item["id"]: item["name"] for item in events[0].output
+        }
+        # The web renders these authorized rows directly. Supplying the
+        # project label here avoids asking the model or browser to infer it.
+        enriched_entries = [
+            {
+                **entry,
+                "project_name": project_names.get(
+                    entry["project_id"], "Unavailable project"
+                ),
+            }
+            for entry in entries
+        ]
         return ExecutionResult(
             message=f"I found {len(entries)}{label} {noun} in your role scope.",
             tool_events=events,
-            data=entries,
+            data=enriched_entries,
         )
 
     async def _handle_hours_by_project(
@@ -330,12 +403,13 @@ class ReadQueryRegistry:
             )
         else:
             message = (
-                f"You can approve eligible direct-report entries in Core API, and "
-                f"{len(entries)} submitted entries are visible. This milestone is "
-                "read-only for approvals, so no approval action was performed."
+                f"You can decide eligible direct-report entries, and {len(entries)} "
+                "submitted entries are visible. This request only inspected the "
+                "queue; provide an exact entry ID and approve/reject decision to "
+                "create a dry-run proposal."
             )
         return ExecutionResult(
             message=message,
             tool_events=events,
-            data=entries,
+            data={"type": "pending_approvals", "rows": entries},
         )

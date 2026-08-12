@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -30,8 +31,30 @@ CONTENT_PATTERNS = {
 
 
 def iter_publication_files():
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or any(part in EXCLUDED_PARTS for part in path.parts):
+    # Scan exactly what Git could publish: tracked files plus untracked files
+    # that are not ignored. Local `.env` files stay private, while newly
+    # authored source files are still checked before they are staged.
+    result = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+    for relative_bytes in result.stdout.split(b"\0"):
+        if not relative_bytes:
+            continue
+        relative = Path(relative_bytes.decode("utf-8"))
+        path = ROOT / relative
+        if not path.is_file() or any(
+            part in EXCLUDED_PARTS for part in relative.parts
+        ):
             continue
         yield path
 

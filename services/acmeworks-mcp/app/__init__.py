@@ -1,0 +1,1 @@
+"""AcmeWorks MCP adapter package."""

@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 PlanFieldName = Literal[
     "project_id",
@@ -26,6 +26,107 @@ class ChatRequest(BaseModel):
     session_id: UUID | None = None
 
 
+class PreferenceUpdateRequest(BaseModel):
+    history_enabled: bool | None = None
+    preferred_language: Literal["auto", "en", "zh"] | None = None
+    preferred_project_id: int | None = Field(default=None, ge=1)
+    clear_preferred_project: bool = False
+    response_detail: Literal["concise", "standard", "detailed"] | None = None
+    report_format: Literal["summary", "csv"] | None = None
+
+    @model_validator(mode="after")
+    def require_one_change(self):
+        if (
+            self.history_enabled is None
+            and self.preferred_language is None
+            and self.preferred_project_id is None
+            and not self.clear_preferred_project
+            and self.response_detail is None
+            and self.report_format is None
+        ):
+            raise ValueError("At least one preference change is required")
+        return self
+
+
+class PreferenceConfirmRequest(BaseModel):
+    confirm: Literal[True]
+
+
+class MemoryCreateRequest(BaseModel):
+    """A deliberately narrow, non-sensitive fact explicitly supplied by a user."""
+
+    category: Literal[
+        "work_preference",
+        "reporting_preference",
+        "collaboration_preference",
+    ]
+    value: str = Field(min_length=1, max_length=200)
+
+    @field_validator("value")
+    @classmethod
+    def normalize_value(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Memory value cannot be blank")
+        blocked_markers = ("password", "api key", "secret key", "sk-", "身份证", "密码")
+        if any(marker in normalized.casefold() for marker in blocked_markers):
+            raise ValueError("Sensitive credentials or identifiers cannot be stored")
+        return normalized
+
+
+class MemoryUpdateRequest(BaseModel):
+    category: Literal[
+        "work_preference",
+        "reporting_preference",
+        "collaboration_preference",
+    ] | None = None
+    value: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def require_change(self):
+        if self.category is None and self.value is None:
+            raise ValueError("At least one memory change is required")
+        if self.value is not None:
+            self.value = " ".join(self.value.split())
+        return self
+
+
+class TimeEntryDraftItem(BaseModel):
+    """One exact item proposed as part of a batch dry-run."""
+
+    project_id: int | None = None
+    project_name: str | None = None
+    work_date: date | None = None
+    hours: Decimal | None = Field(default=None, gt=0, le=24)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class AnalysisStep(BaseModel):
+    """One bounded, read-only slice in a comparison plan."""
+
+    label: str = Field(min_length=1, max_length=80)
+    project_id: int | None = Field(default=None, ge=1)
+    project_name: str | None = Field(default=None, max_length=80)
+    entry_status: Literal["draft", "submitted", "approved", "rejected"] | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+class AnalyticsQuerySpec(BaseModel):
+    """Declarative read-only analytics compiled by Core API, never raw SQL."""
+
+    dimension: Literal["project", "status", "employee", "work_date", "month"]
+    metric: Literal["hours", "entry_count"]
+    start_date: date | None = None
+    end_date: date | None = None
+    entry_status: Literal["draft", "submitted", "approved", "rejected"] | None = None
+    project_id: int | None = Field(default=None, ge=1)
+    project_name: str | None = Field(default=None, max_length=80)
+    employee_id: int | None = Field(default=None, ge=1)
+    order: Literal["asc", "desc"] = "desc"
+    limit: int = Field(default=20, ge=1, le=50)
+
+
 class AgentPlan(BaseModel):
     intent: Literal[
         "current_user",
@@ -37,9 +138,23 @@ class AgentPlan(BaseModel):
         "hours_by_project",
         "summary",
         "monthly_chart",
+        "weekly_report",
+        "export_report",
+        "compare_analysis",
+        "safe_sql_analysis",
         "pending_team",
         "policy_question",
+        "suggest_time_entries",
         "draft_time_entry",
+        "draft_time_entries_batch",
+        "decide_time_entry",
+        "decide_time_entries",
+        "manage_time_entry",
+        "remember_memory",
+        "list_memories",
+        "forget_memory",
+        "greeting",
+        "general_chat",
         "capabilities",
         "unknown",
     ]
@@ -63,6 +178,86 @@ class AgentPlan(BaseModel):
     work_date: date | None = None
     hours: Decimal | None = Field(default=None, gt=0, le=24)
     description: str | None = Field(default=None, max_length=500)
+    time_entry_id: int | None = Field(default=None, ge=1)
+    time_entry_ids: list[int] = Field(default_factory=list, max_length=20)
+    approval_decision: Literal["approved", "rejected"] | None = None
+    approval_comment: str | None = Field(default=None, max_length=500)
+    lifecycle_action: Literal["update", "delete", "submit", "withdraw"] | None = None
+    batch_entries: list[TimeEntryDraftItem] = Field(
+        default_factory=list, max_length=10
+    )
+    analysis_steps: list[AnalysisStep] = Field(
+        default_factory=list, min_length=0, max_length=4
+    )
+    analytics_query: AnalyticsQuerySpec | None = None
+    memory_category: Literal[
+        "work_preference", "reporting_preference", "collaboration_preference"
+    ] | None = None
+    memory_value: str | None = Field(default=None, max_length=200)
+    memory_id: str | None = Field(default=None, max_length=80)
+
+    @field_validator("inherit_fields", "time_entry_ids", mode="before")
+    @classmethod
+    def normalize_empty_lists(cls, value: Any) -> Any:
+        """Normalize provider-specific empty renderings for optional lists."""
+
+        return [] if value in ({}, "", None) else value
+
+    @field_validator(
+        "approval_decision", "lifecycle_action", mode="before"
+    )
+    @classmethod
+    def normalize_empty_optional_literals(cls, value: Any) -> Any:
+        """DashScope may render an unused optional enum as an empty string."""
+
+        return None if value in ({}, "", None) else value
+
+    @field_validator("field_resolutions", mode="before")
+    @classmethod
+    def normalize_empty_field_resolutions(cls, value: Any) -> Any:
+        """Accept a provider's empty-object rendering as an empty list.
+
+        Field resolutions are recalculated by trusted application code after
+        planning, so normalizing this empty value cannot grant capabilities.
+        """
+
+        return [] if value in ({}, None) else value
+
+    @field_validator("batch_entries", mode="before")
+    @classmethod
+    def normalize_empty_batch_entries(cls, value: Any) -> Any:
+        return [] if value in ({}, None) else value
+
+    @field_validator("analysis_steps", mode="before")
+    @classmethod
+    def normalize_empty_analysis_steps(cls, value: Any) -> Any:
+        return [] if value in ({}, None) else value
+
+    @field_validator("analytics_query", mode="before")
+    @classmethod
+    def normalize_empty_analytics_query(cls, value: Any) -> Any:
+        return None if value in ({}, None) else value
+
+    @field_validator("conversation_relation", mode="before")
+    @classmethod
+    def normalize_unknown_conversation_relation(cls, value: Any) -> Any:
+        """Make provider-specific empty values safely independent.
+
+        Only explicit allowlisted relations can inherit read filters. Any
+        unknown rendering therefore receives the least-privileged default.
+        """
+
+        allowed = {
+            "independent",
+            "refine_previous",
+            "switch_subject",
+            "use_actor_context",
+        }
+        return (
+            value
+            if isinstance(value, str) and value in allowed
+            else "independent"
+        )
 
 
 class ConversationTurn(BaseModel):
@@ -82,6 +277,7 @@ class PlannerContext(BaseModel):
     departments: list[dict[str, Any]] = Field(default_factory=list)
     projects: list[dict[str, Any]] = Field(default_factory=list)
     recent_time_entries: list[dict[str, Any]] = Field(default_factory=list)
+    preferences: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def last_plan(self) -> AgentPlan | None:

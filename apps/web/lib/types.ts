@@ -39,6 +39,100 @@ export type ChartData = {
   rows: Array<Record<string, string>>;
 };
 
+export type TimeEntrySuggestion = {
+  project_id: number;
+  project_name: string;
+  target_date: string;
+  suggested_hours: string;
+  suggested_description: string;
+  based_on_entry_id: number;
+  based_on_date: string;
+};
+
+export type TimeEntrySuggestionData = {
+  type: "time_entry_suggestions";
+  suggestions: TimeEntrySuggestion[];
+};
+
+export type TimeEntryRow = {
+  id: number;
+  employee_id: number;
+  project_id: number;
+  project_name: string;
+  work_date: string;
+  hours: string;
+  description: string;
+  status: "draft" | "submitted" | "approved" | "rejected";
+};
+
+export type EmployeeData = {
+  type: "employees";
+  rows: Array<{ id: number; name: string; title: string; role: string; email: string; department_id: number; manager_id: number | null }>;
+};
+
+export type ProjectData = {
+  type: "projects";
+  rows: Array<{ id: number; name: string; code: string; status: string; description: string; department_id: number }>;
+};
+
+export type ProjectMemberData = {
+  type: "project_members";
+  project_id: number;
+  project_name: string;
+  rows: Array<{ id: number; employee_id: number; employee_name: string; project_role: string }>;
+};
+
+export type PendingApprovalData = {
+  type: "pending_approvals";
+  rows: TimeEntryRow[];
+};
+
+export type StructuredMemoryData = {
+  type: "structured_memories";
+  rows: Array<{ id: string; category: string; value: string; updated_at: number }>;
+};
+
+export type WeeklyReportData = {
+  type: "weekly_report";
+  week_start: string;
+  week_end: string;
+  total_hours: string;
+  entry_count: number;
+  hours_by_status: Record<string, string>;
+  entries: Array<Record<string, unknown>>;
+};
+
+export type ReportExportData = {
+  type: "report_export";
+  format: "csv" | "xlsx" | "pdf";
+  row_count: number;
+  filters: Record<string, string | number>;
+};
+
+export type ComparisonData = {
+  type: "comparison";
+  baseline: string;
+  rows: Array<{
+    label: string;
+    project_name: string | null;
+    start_date: string | null;
+    end_date: string | null;
+    status: string | null;
+    entry_count: number;
+    hours: string;
+    delta_from_first: string;
+  }>;
+};
+
+export type SafeAnalyticsData = {
+  type: "safe_sql_analysis";
+  dimension: string;
+  metric: string;
+  row_count: number;
+  query_spec: Record<string, unknown>;
+  rows: Array<{ dimension: string; value: string }>;
+};
+
 export type ChatResponse = {
   message: string;
   mode: "local" | "openai";
@@ -55,10 +149,21 @@ export type ChatResponse = {
   confirmation: Confirmation | null;
 };
 
+export type AgentProgressEvent = {
+  kind: "status" | "tool";
+  stage?: "planning" | "executing" | "composing";
+  message?: string;
+  intent?: string;
+  name?: string;
+  status?: "completed" | "failed";
+};
+
 export type ConversationItem = {
   id: string;
   actorId: number;
   prompt: string;
   response?: ChatResponse;
+  progress?: AgentProgressEvent[];
+  streamingText?: string;
   error?: string;
 };

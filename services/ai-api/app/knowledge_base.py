@@ -39,6 +39,21 @@ CHINESE_ALIASES = {
     "保留": {"retention"},
     "演示": {"demo"},
 }
+TOKEN_ALIASES = {
+    "approvals": "approve",
+    "approval": "approve",
+    "approved": "approve",
+    "corrections": "correct",
+    "correction": "correct",
+    "deadlines": "deadline",
+    "entries": "entry",
+    "report": "reporting",
+    "reports": "reporting",
+    "submitted": "submit",
+    "submission": "submit",
+    "submissions": "submit",
+    "timesheet": "time",
+}
 
 
 @dataclass(frozen=True)
@@ -51,6 +66,7 @@ class PolicyChunk:
     relative_path: str
     text: str
     tokens: frozenset[str]
+    character_ngrams: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -60,40 +76,69 @@ class RetrievalResult:
     answer: str
     citations: list[PolicyCitation]
     confidence: float
+    evidence_coverage: float
+    retrieval_mode: str = "hybrid"
 
 
 class PolicyKnowledgeBase:
-    """Load Markdown policies and answer only when lexical evidence is strong."""
+    """Hybrid local retrieval with coverage-aware, extractive answers."""
 
-    def __init__(self, root: Path, *, minimum_score: float = 0.16) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        minimum_score: float = 0.16,
+        minimum_coverage: float = 0.55,
+    ) -> None:
         self.root = root
         self.minimum_score = minimum_score
-        self.chunks = self._load_chunks(root)
-        self._document_frequency = Counter(
-            token for chunk in self.chunks for token in chunk.tokens
-        )
+        self.minimum_coverage = minimum_coverage
+        self.chunks: list[PolicyChunk] = []
+        self._document_frequency: Counter[str] = Counter()
+        self.reload()
+
+    def reload(self) -> dict[str, int]:
+        """Atomically rebuild the in-process index from authored Markdown."""
+
+        chunks = self._load_chunks(self.root)
+        frequencies = Counter(token for chunk in chunks for token in chunk.tokens)
+        self.chunks = chunks
+        self._document_frequency = frequencies
+        return {
+            "documents": len({chunk.source_id for chunk in chunks}),
+            "chunks": len(chunks),
+        }
 
     def search(self, query: str, *, limit: int = 3) -> RetrievalResult | None:
         """Retrieve policy sections and compose an extractive grounded answer."""
 
-        query_tokens = _tokenize(query)
+        query_tokens = _query_tokens(query)
         if not query_tokens or not self.chunks:
             return None
 
+        query_ngrams = _character_ngrams(query)
         ranked = sorted(
-            (
-                (self._score(chunk, query_tokens), chunk)
-                for chunk in self.chunks
-            ),
+            ((self._score(chunk, query_tokens, query_ngrams), chunk) for chunk in self.chunks),
             key=lambda item: item[0],
             reverse=True,
         )
-        selected = [
-            (score, chunk)
-            for score, chunk in ranked[:limit]
-            if score >= self.minimum_score
-        ]
+        candidates = [(score, chunk) for score, chunk in ranked if score >= self.minimum_score]
+        selected: list[tuple[float, PolicyChunk]] = []
+        covered: set[str] = set()
+        # Greedily prefer chunks that add evidence for unanswered query terms;
+        # this retrieves multiple supporting sections for compound questions.
+        while candidates and len(selected) < limit:
+            score, chunk = max(
+                candidates,
+                key=lambda item: item[0] + 0.15 * len((item[1].tokens & query_tokens) - covered),
+            )
+            selected.append((score, chunk))
+            covered.update(chunk.tokens & query_tokens)
+            candidates.remove((score, chunk))
         if not selected:
+            return None
+        coverage = len(covered) / max(len(query_tokens), 1)
+        if coverage < self.minimum_coverage:
             return None
 
         citations = [
@@ -111,35 +156,40 @@ class PolicyKnowledgeBase:
             answer=answer,
             citations=citations,
             confidence=round(selected[0][0], 3),
+            evidence_coverage=round(coverage, 3),
         )
 
-    def _score(self, chunk: PolicyChunk, query_tokens: set[str]) -> float:
-        """Calculate normalized IDF overlap with small title/section boosts."""
+    def _score(
+        self,
+        chunk: PolicyChunk,
+        query_tokens: set[str],
+        query_ngrams: set[str],
+    ) -> float:
+        """Blend IDF term coverage, heading evidence, and character similarity."""
 
         overlap = query_tokens & chunk.tokens
         if not overlap:
-            return 0.0
-        corpus_size = max(len(self.chunks), 1)
-        weighted_overlap = sum(
-            math.log(
-                (corpus_size + 1)
-                / (self._document_frequency[token] + 1)
+            lexical_score = 0.0
+        else:
+            corpus_size = max(len(self.chunks), 1)
+            weighted_overlap = sum(
+                math.log((corpus_size + 1) / (self._document_frequency[token] + 1)) + 1
+                for token in overlap
             )
-            + 1
-            for token in overlap
-        )
-        query_weight = sum(
-            math.log(
-                (corpus_size + 1)
-                / (self._document_frequency[token] + 1)
+            query_weight = sum(
+                math.log((corpus_size + 1) / (self._document_frequency[token] + 1)) + 1
+                for token in query_tokens
             )
-            + 1
-            for token in query_tokens
-        )
-        score = weighted_overlap / max(query_weight, 1)
+            lexical_score = weighted_overlap / max(query_weight, 1)
         heading_tokens = _tokenize(f"{chunk.title} {chunk.section}")
-        if overlap & heading_tokens:
-            score += 0.12
+        heading_score = 0.12 if overlap & heading_tokens else 0.0
+        union = query_ngrams | chunk.character_ngrams
+        fuzzy_score = (
+            len(query_ngrams & chunk.character_ngrams) / len(union)
+            if union
+            else 0.0
+        )
+        score = 0.72 * lexical_score + heading_score + 0.28 * fuzzy_score
         return min(score, 1.0)
 
     @staticmethod
@@ -164,6 +214,9 @@ class PolicyKnowledgeBase:
                         tokens=frozenset(
                             _tokenize(f"{title} {section} {text}")
                         ),
+                        character_ngrams=frozenset(
+                            _character_ngrams(f"{title} {section} {text}")
+                        ),
                     )
                 )
         return chunks
@@ -175,7 +228,7 @@ def _tokenize(text: str) -> set[str]:
     tokens: set[str] = set()
     for phrase, aliases in CHINESE_ALIASES.items():
         if phrase in text:
-            tokens.update(aliases)
+            tokens.update(TOKEN_ALIASES.get(alias, alias) for alias in aliases)
     for match in WORD_PATTERN.findall(text.casefold()):
         if re.fullmatch(r"[\u4e00-\u9fff]+", match):
             tokens.update(match)
@@ -185,8 +238,29 @@ def _tokenize(text: str) -> set[str]:
             )
         else:
             if match not in STOP_WORDS:
-                tokens.add(match)
+                tokens.add(TOKEN_ALIASES.get(match, match))
     return tokens
+
+
+def _query_tokens(text: str) -> set[str]:
+    """Keep unknown English concepts while avoiding Chinese alias dilution."""
+
+    tokens = _tokenize(text)
+    if any(re.search(r"[\u4e00-\u9fff]", token) for token in tokens) and any(
+        token.isascii() for token in tokens
+    ):
+        return {token for token in tokens if token.isascii()}
+    return tokens
+
+
+def _character_ngrams(text: str, size: int = 3) -> set[str]:
+    normalized = re.sub(r"\s+", " ", text.casefold()).strip()
+    if len(normalized) < size:
+        return {normalized} if normalized else set()
+    return {
+        normalized[index : index + size]
+        for index in range(len(normalized) - size + 1)
+    }
 
 
 def _parse_front_matter(content: str) -> tuple[dict[str, str], str]:

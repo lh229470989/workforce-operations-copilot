@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "prompts": {
+    "planner": {"version": "1.2.0", "file": "planner-v1.1.txt", "sha256": "53ca899eb409d1f0ef4c6f454f8ef2d4d6ad21811e6f3fd66f535ac53a9bf38e"},
+    "composer": {"version": "1.1.0", "file": "composer-v1.1.txt", "sha256": "7d1033dad054c4eab9f20a4467af15293e1b04b0200d7307ef7d7be660d1d702"}
+  }
+}

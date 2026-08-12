@@ -25,16 +25,19 @@ Create a public, portfolio-ready demonstration of a secure enterprise AI copilot
 - "Show monthly hours by project as a chart."
 - "Can I approve my team's pending time entries?"
 
-## Current follow-up milestone
+## Completed expansion sequence
 
-Expand the original demo with an authored-from-scratch query foundation:
+The original demo was expanded in this order, with each capability authored
+from scratch for AcmeWorks:
 
-1. Register role-scoped read capabilities outside the orchestration graph.
-2. Support profile, department, employee, project-member, time-entry, and
-   workflow-summary queries.
-3. Add English/Chinese relative-date and status filtering.
-4. Add short conversation context only after the stateless query contract is
-   covered by regression tests.
+1. Smart recent-work suggestions and atomic batch time-entry drafts.
+2. Conversational approval/rejection dry-runs with separate confirmation.
+3. SSE answers with live planner and tool status.
+4. Role-scoped weekly reports and CSV export.
+5. Validated multi-tool comparison plans.
+6. Versioned, checksummed planner and composer prompt files.
+7. Actor-bound persistent sessions and privacy-controlled preferences.
+8. Coverage-aware hybrid policy retrieval and declarative safe analytics.
 
 ## Portfolio roadmap
 
@@ -46,13 +49,17 @@ Expand the original demo with an authored-from-scratch query foundation:
 4. **Query and conversation foundation** — expanded bilingual queries,
    structured conversation relations, authoritative actor context, and
    actor-bound short sessions.
-5. **Suggested work and approval proposals** — batch suggestions and approval
-   dry-runs. This remains a future milestone.
+5. **Suggested work and approval proposals** — personal recent-work
+   suggestions, atomic batch time-entry dry-runs, and conversational approval
+   or rejection dry-runs for exact entries.
 6. **Grounded policy knowledge** — original AcmeWorks policies, progressive
    retrieval, evidence thresholds, refusal, and structured citations.
 7. **Release assurance** — authored evaluations, privacy-conscious
    observability, security headers and scans, CI, threat documentation, and a
    public-release checklist.
+8. **Advanced retrieval and analytics** — compound-query evidence coverage,
+   bounded declarative analytics, Core-enforced row visibility, SQLite
+   query-only execution, and a one-second execution budget.
 
-Milestones 1–4, 6, and 7 are implemented. Milestone 5 is intentionally not
-implied by the policy or release work and remains separately scoped.
+Milestones 1–8 are implemented. Every write-capable conversation remains a
+proposal until the user separately confirms a server-authorized token.

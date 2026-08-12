@@ -46,11 +46,16 @@ All endpoints except `/health` require `X-Actor-ID`.
 | GET | `/projects`, `/projects/{id}` | Role-scoped projects |
 | GET | `/projects/{id}/members` | Visible project members |
 | GET | `/time-entries`, `/time-entries/{id}` | Filterable, scoped time |
+| GET | `/time-entry-suggestions` | Personal suggestions from recent work |
 | GET | `/approvals` | Approval history in scope |
+| GET | `/reports/weekly` | Role-scoped weekly report |
+| GET | `/reports/weekly.csv` | Download the same report as CSV |
+| POST | `/analytics/query` | Compile a declarative, role-scoped read query |
 | GET | `/stats/summary` | Hours by status |
 | GET | `/stats/hours-by-project` | Project totals and date filters |
 | GET | `/stats/monthly-hours` | Monthly totals |
 | POST | `/time-entries/dry-run` | Preview a time-entry draft |
+| POST | `/time-entries/batch/dry-run` | Preview up to 10 time-entry drafts |
 | POST | `/time-entries/{id}/approval/dry-run` | Preview approval/rejection |
 | POST | `/actions/{token}/confirm` | Explicitly confirm a preview |
 
@@ -80,6 +85,17 @@ curl -s http://localhost:8001/actions/TOKEN/confirm \
 Tokens expire after 15 minutes, are bound to the actor that created them, and
 can be used only once. Confirmation creates an audit event. Approval decisions
 also create an approval record.
+
+The suggestion endpoint is read-only and derives candidates only from the
+actor's own recent fictional entries and current project memberships. A batch
+dry-run validates every item before issuing one confirmation token. Confirmation
+rechecks authorization and creates all entries in one transaction, so a failed
+item cannot leave a partially written batch.
+
+The lifecycle API also supports dry-run update, delete, submit, withdraw, and
+atomic batch approval. `GET /reports/time-entries.csv` reuses the list filters
+and role scope. `/audit-events` and `/audit-events/stats` are admin-only and
+omit payload details by default.
 
 ## Tests
 
