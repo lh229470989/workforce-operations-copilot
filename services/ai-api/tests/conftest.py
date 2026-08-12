@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -300,9 +301,14 @@ def fake_core():
 
 @pytest.fixture
 def client(fake_core, tmp_path):
+    # Tests must name their authored policy fixture explicitly. Relying on the
+    # process working directory hides packaging and CI path regressions.
+    knowledge_base_path = Path(__file__).resolve().parents[3] / "knowledge-base"
+    assert (knowledge_base_path / "time-reporting.md").is_file()
     settings = Settings(
         core_api_base_url="http://core.test",
         ai_mode="local",
+        knowledge_base_path=str(knowledge_base_path),
         state_database_path=str(tmp_path / "ai-state.db"),
     )
     app = create_app(

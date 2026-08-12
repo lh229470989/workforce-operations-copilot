@@ -42,8 +42,6 @@ jobs:
 
   python-tests:
     runs-on: ubuntu-latest
-    env:
-      KNOWLEDGE_BASE_PATH: ${{ github.workspace }}/knowledge-base
     strategy:
       matrix:
         service: [demo-core-api, ai-api, acmeworks-mcp]
