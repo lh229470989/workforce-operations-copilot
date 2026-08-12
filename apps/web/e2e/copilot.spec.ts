@@ -5,9 +5,10 @@ test("streams a role-scoped answer and renders a report download card", async ({
   await page.getByPlaceholder(/Ask about/i).fill("Download my submitted time entries as CSV");
   await page.getByRole("button", { name: /send/i }).click();
 
-  await expect(page.getByText("Your role-scoped CSV export is ready")).toBeVisible();
   const download = page.getByRole("link", { name: "Download CSV" });
-  await expect(download).toBeVisible();
+  // The response wording and LLM latency may vary; the trusted structured
+  // download card is the stable browser contract this test owns.
+  await expect(download).toBeVisible({ timeout: 45_000 });
   await expect(download).toHaveAttribute("href", /status=submitted/);
 });
 
@@ -18,7 +19,7 @@ test("keeps write execution behind explicit confirmation", async ({ page }) => {
   );
   await page.getByRole("button", { name: /send/i }).click();
 
-  await expect(page.getByText(/DRY RUN/i)).toBeVisible();
+  await expect(page.getByText("DRY RUN", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Confirm & create" })).toBeVisible();
 });
 
