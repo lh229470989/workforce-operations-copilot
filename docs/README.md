@@ -14,6 +14,7 @@
 7. [本地运行与调试](local-development.md)：查看 Docker、热更新和日志调试方式。
 8. [SMB AI 自动化作品集路线图](portfolio-roadmap.md)：查看后续作品集、真实集成和交付能力建设计划。
 9. [作品集演示材料](portfolio-demo.md)：查看 60–90 秒视频脚本、截图清单和 Upwork 文案。
+10. [SMB Calendar → Copilot → Slack 集成设计](smb-integration-design.md)：评审第二阶段 Schema、n8n、签名、幂等、重试、mock 与凭据边界。
 
 ## 快速定位
 
