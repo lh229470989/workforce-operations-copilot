@@ -1,14 +1,14 @@
 # SMB Calendar → Copilot → Slack 集成设计
 
-状态：**设计评审稿，未实现**
+状态：**设计已批准，实现未开始**
 
-版本：`v1-draft`
+版本：`v1-approved`
 
-日期：2026-08-13
+批准日期：2026-08-17
 
 本文固定第二阶段的接口合同、安全边界、两个 n8n workflow、幂等、重试、
-mock、测试账户和凭据策略。本文通过评审前，不新增真实第三方调用代码，也不
-把这里的设计描述为已实现能力。
+mock、测试账户和凭据策略。本文已通过设计评审，但在对应实现与测试完成前，
+不得把这里的设计描述为已实现能力。
 
 ## 1. 客户问题与交付目标
 
@@ -29,6 +29,7 @@ mock、测试账户和凭据策略。本文通过评审前，不新增真实第�
 | Google scope | 只申请 `https://www.googleapis.com/auth/calendar.readonly` |
 | 通知平台 | Slack Incoming Webhook，只发送确认成功后的可信结果 |
 | n8n 形态 | 发布两个可导入 JSON 模板，不托管公共 n8n |
+| n8n 验证基线 | 锁定 `2.34.6`，模板在该版本导入、执行并重新导出 |
 | 在线 Demo | 只运行 mock，并显示 `Simulated integration` |
 | 真实集成 | 仅在私有测试环境和录制视频中展示 |
 | 数据 | 仅使用虚构人员、项目、事件、工时和通知 |
@@ -111,7 +112,8 @@ flowchart LR
 7. **HTTP Request → Ingest API**：携带签名、时间戳、nonce 和幂等键。
 8. **Error branch**：按错误分类重试或记录最小失败 metadata。
 
-发布前必须把两个模板导入明确锁定的 n8n 版本并重新导出。HMAC-SHA256 使用
+发布前必须把两个模板导入锁定的 n8n `2.34.6` 并重新导出。升级版本必须单独
+执行导入、固定向量和 mock 集成回归。HMAC-SHA256 使用
 n8n 内建 Crypto 节点及其 credential；仅当目标版本无法对确切原始 body 完成
 合同所需操作时，才允许使用已记录部署要求并通过固定 test vector 的 Code node。
 模板不得依赖未记录的 community node。
@@ -560,16 +562,16 @@ docker compose --profile integration-test up --build --abort-on-container-exit
 
 ## 18. 设计验收清单
 
-- [ ] WorkEvent v1 字段、长度、版本和额外字段策略通过评审；
-- [ ] actor/project 映射责任和无认证外部事件不创建 PendingAction 通过评审；
-- [ ] HMAC base string、时间窗口、nonce 和密钥轮换通过评审；
-- [ ] source event 与 revision 两级幂等通过评审；
-- [ ] confirmed outbox event 和 Slack 字段最小化通过评审；
-- [ ] delivery claim/complete、未知结果和禁止自动重发策略通过评审；
-- [ ] 两个 n8n workflow 的节点图和目标 n8n 版本通过评审；
-- [ ] Google test-only project、Slack fallback workspace 和凭据策略通过评审；
-- [ ] public mock 标识、CI fixtures 和故障恢复测试通过评审；
-- [ ] 本文通过后才开始实现，路线图状态再从“设计评审”改为“实现中”。
+- [x] WorkEvent v1 字段、长度、版本和额外字段策略通过评审；
+- [x] actor/project 映射责任和无认证外部事件不创建 PendingAction 通过评审；
+- [x] HMAC base string、时间窗口、nonce 和密钥轮换通过评审；
+- [x] source event 与 revision 两级幂等通过评审；
+- [x] confirmed outbox event 和 Slack 字段最小化通过评审；
+- [x] delivery claim/complete、未知结果和禁止自动重发策略通过评审；
+- [x] 两个 n8n workflow 的节点图和目标 n8n `2.34.6` 通过评审；
+- [x] Google test-only project、Slack fallback workspace 和凭据策略通过评审；
+- [x] public mock 标识、CI fixtures 和故障恢复测试通过评审；
+- [x] 设计评审通过后才开始实现，路线图状态更新为“实现中”。
 
 ## 19. 官方依据
 
