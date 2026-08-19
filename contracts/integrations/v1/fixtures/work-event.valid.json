@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "source": "google_calendar",
+  "source_account_ref": "google-test-account-01",
+  "calendar_id": "portfolio-work-calendar",
+  "event_id": "fictional-event-001",
+  "event_updated_at": "2026-08-13T01:15:00Z",
+  "person_ref": "jamie-rivera",
+  "project_code": "APOLLO",
+  "work_date": "2026-08-12",
+  "duration_minutes": 90,
+  "description": "Prepared fictional customer workshop"
+}

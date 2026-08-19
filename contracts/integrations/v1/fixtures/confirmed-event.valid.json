@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "event_type": "time_entry.confirmed",
+  "event_id": "9ef2ddf8-f720-4d40-b2fa-31c4085107e2",
+  "occurred_at": "2026-08-13T01:30:00Z",
+  "request_id": "req_01",
+  "result": {
+    "time_entry_id": 42,
+    "person_display_name": "Jamie Rivera",
+    "project_display_name": "Apollo",
+    "work_date": "2026-08-12",
+    "hours": "1.50",
+    "status": "draft"
+  }
+}
