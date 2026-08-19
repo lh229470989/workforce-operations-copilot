@@ -80,6 +80,7 @@ jobs:
 
   browser-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -89,8 +90,7 @@ jobs:
           cache-dependency-path: apps/web/package-lock.json
       - run: npm ci
         working-directory: apps/web
-      - run: npx playwright install --with-deps chromium
-        working-directory: apps/web
+      - run: google-chrome --version
       - run: docker compose up --build -d
       - run: |
           for attempt in {1..60}; do

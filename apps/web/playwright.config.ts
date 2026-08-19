@@ -12,8 +12,6 @@ export default defineConfig({
   },
   projects: [{
     name: "chromium",
-    use: process.env.CI
-      ? { browserName: "chromium" }
-      : { browserName: "chromium", channel: "chrome" },
+    use: { browserName: "chromium", channel: "chrome" },
   }],
 });
