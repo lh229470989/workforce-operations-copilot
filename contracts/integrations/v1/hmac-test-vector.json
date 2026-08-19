@@ -1,0 +1,15 @@
+{
+  "name": "work-event-ingest-v1-fictional",
+  "test_key_utf8": "test-only-hmac-key-01",
+  "timestamp": 1786554000,
+  "nonce": "550e8400-e29b-41d4-a716-446655440000",
+  "method": "POST",
+  "path": "/api/v1/integrations/work-events:ingest",
+  "body_utf8": "{\"schema_version\":\"1.0\",\"source\":\"google_calendar\",\"source_account_ref\":\"google-test-account-01\",\"calendar_id\":\"portfolio-work-calendar\",\"event_id\":\"fictional-event-001\",\"event_updated_at\":\"2026-08-13T01:15:00Z\",\"person_ref\":\"jamie-rivera\",\"project_code\":\"APOLLO\",\"work_date\":\"2026-08-12\",\"duration_minutes\":90,\"description\":\"Prepared fictional customer workshop\"}",
+  "body_sha256": "0f84aaa127217c24e38a887e0a83db8819d2e0dd2365156a737186ecb862a428",
+  "base_string": "v1\n1786554000\n550e8400-e29b-41d4-a716-446655440000\nPOST\n/api/v1/integrations/work-events:ingest\n0f84aaa127217c24e38a887e0a83db8819d2e0dd2365156a737186ecb862a428",
+  "signature": "v1=60d26350b6297e2e3937c4db2353ecabd3c4d6d0c15fe754eee8bfe714cf2d2b",
+  "source_event_key": "9b8178d93256ac8f2160ef761314c29a43a933576533329931f219df842483b2",
+  "revision_key": "3f2aac1556530ae0e75fcf17765929e6120c84026bcce138dd2b20c7aac67fad",
+  "idempotency_key": "sha256:3f2aac1556530ae0e75fcf17765929e6120c84026bcce138dd2b20c7aac67fad"
+}

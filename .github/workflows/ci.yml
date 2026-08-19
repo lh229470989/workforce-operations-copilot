@@ -54,6 +54,8 @@ jobs:
       - run: pip install "./services/${{ matrix.service }}[test]"
       - run: pytest
         working-directory: services/${{ matrix.service }}
+      - if: matrix.service == 'demo-core-api'
+        run: python scripts/validate_integration_contracts.py
 
   web:
     runs-on: ubuntu-latest

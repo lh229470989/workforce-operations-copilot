@@ -31,7 +31,7 @@
 | 阶段 | 目标 | 状态 |
 | --- | --- | --- |
 | 第一阶段 | 让当前项目达到可直接用于 Upwork 投递的展示质量 | 已完成：PR CI、合并、干净环境录制和公开视频 URL 均已闭环 |
-| 第二阶段 | 增加一个贴近中小企业场景的真实自动化纵向案例 | 实现中：设计已批准，下一批为 Contracts（Schema、模型、HMAC vectors、fixtures） |
+| 第二阶段 | 增加一个贴近中小企业场景的真实自动化纵向案例 | 实现中：设计已合并，Contracts（Schema、模型、HMAC vectors、fixtures）进入评审 |
 | 第三阶段 | 补齐常见交付能力和 Upwork 需求关键词 | 待开始 |
 | 第四阶段 | 根据真实投递与客户反馈选择专业化方向 | 待开始 |
 
@@ -301,3 +301,4 @@ Workflow B：confirmed event / webhook
 | 2026-08-13 | 第一个新案例采用“外部事件 → 建议 → 人工确认 → 通知”的纵向结构 | 该结构复用现有 dry-run/confirmation 优势，也贴合中小企业常见工作流 |
 | 2026-08-13 | 第二阶段采用 Google Calendar 只读输入、Slack Incoming Webhook 确认后通知和两个独立 n8n 模板 | 最小权限、避免长时间等待的 n8n 执行、阻止外部事件绕过人工确认，并便于 SMB 客户理解和复用 |
 | 2026-08-17 | 第二阶段设计评审通过，n8n 验证基线锁定为 `2.34.6`，先实现 Contracts 批次 | 先冻结机器合同和跨系统签名测试向量，降低后续持久化、UI 与 workflow 模板之间的返工风险 |
+| 2026-08-19 | 第二阶段设计合并，Contracts 批次进入实现评审 | 先用无凭据 JSON Schema、Pydantic、固定 HMAC/幂等向量和虚构 fixtures 锁定跨系统边界；nonce 与数据库幂等留到 persistence 批次 |
