@@ -1,6 +1,7 @@
 """Versioned contracts and deterministic integration security helpers."""
 
 from .contracts import ConfirmedEventV1, WorkEventV1
+from .config import IngestIntegrationConfig
 from .security import (
     MAX_BODY_BYTES,
     build_signature_base,
@@ -15,6 +16,7 @@ from .security import (
 
 __all__ = [
     "ConfirmedEventV1",
+    "IngestIntegrationConfig",
     "MAX_BODY_BYTES",
     "WorkEventV1",
     "build_signature_base",
