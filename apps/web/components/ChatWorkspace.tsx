@@ -708,6 +708,171 @@ function PrivacyControls({ actorId }: { actorId: number }) {
   );
 }
 
+type IntegrationSuggestion = {
+  id: string;
+  source_label: string;
+  status: "suggested" | "previewed";
+  project_id: number;
+  project_name: string;
+  work_date: string;
+  hours: string;
+  description: string;
+  expires_at: string;
+};
+
+function IntegrationReview({ actorId }: { actorId: number }) {
+  const [suggestions, setSuggestions] = useState<IntegrationSuggestion[]>([]);
+  const [selected, setSelected] = useState<IntegrationSuggestion | null>(null);
+  const [projectId, setProjectId] = useState("");
+  const [workDate, setWorkDate] = useState("");
+  const [hours, setHours] = useState("");
+  const [description, setDescription] = useState("");
+  const [preview, setPreview] = useState<PreferencePreview | null>(null);
+  const [notice, setNotice] = useState("");
+
+  function choose(suggestion: IntegrationSuggestion) {
+    setSelected(suggestion);
+    setProjectId(String(suggestion.project_id));
+    setWorkDate(suggestion.work_date);
+    setHours(suggestion.hours);
+    setDescription(suggestion.description);
+    setPreview(null);
+    setNotice("");
+  }
+
+  async function load() {
+    const response = await fetch(
+      `/api/integration-suggestions?actorId=${actorId}`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) {
+      setNotice("Unable to load integration suggestions.");
+      return;
+    }
+    const payload = (await response.json()) as IntegrationSuggestion[];
+    setSuggestions(payload);
+    if (payload.length > 0) choose(payload[0]);
+    else {
+      setSelected(null);
+      setPreview(null);
+      setNotice("No simulated integration suggestions are waiting.");
+    }
+  }
+
+  async function prepare() {
+    if (!selected) return;
+    const response = await fetch(
+      `/api/integration-suggestions/${selected.id}/prepare`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorId,
+          project_id: Number(projectId),
+          work_date: workDate,
+          hours,
+          description,
+        }),
+      },
+    );
+    if (response.ok) {
+      setPreview((await response.json()) as PreferencePreview);
+      setNotice("Dry-run ready. No time entry has been written.");
+    } else setNotice("The suggestion could not be prepared.");
+  }
+
+  async function confirm() {
+    if (!preview) return;
+    const response = await fetch(
+      `/api/actions/${preview.confirmation_token}/confirm`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorId, confirm: true }),
+      },
+    );
+    if (!response.ok) {
+      setNotice("Confirmation failed; no integration write was accepted.");
+      return;
+    }
+    setPreview(null);
+    const remaining = suggestions.filter((item) => item.id !== selected?.id);
+    setSuggestions(remaining);
+    if (remaining.length > 0) choose(remaining[0]);
+    else setSelected(null);
+    setNotice("Time entry confirmed from the simulated Calendar suggestion.");
+  }
+
+  return (
+    <details className="privacy-controls integration-review">
+      <summary>Simulated Calendar review</summary>
+      <small>
+        Calendar input can only create a suggestion. Review and confirm separately.
+      </small>
+      <button type="button" onClick={() => void load()}>
+        Load my suggestions
+      </button>
+      {suggestions.length > 1 && (
+        <label>
+          Suggestion
+          <select
+            value={selected?.id ?? ""}
+            onChange={(event) => {
+              const next = suggestions.find(
+                (item) => item.id === event.target.value,
+              );
+              if (next) choose(next);
+            }}
+          >
+            {suggestions.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.work_date} · {item.project_name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {selected && (
+        <>
+          <span className="section-label">{selected.source_label}</span>
+          <label>
+            Project ID
+            <input min="1" type="number" value={projectId} onChange={(event) => setProjectId(event.target.value)} />
+          </label>
+          <label>
+            Work date
+            <input type="date" value={workDate} onChange={(event) => setWorkDate(event.target.value)} />
+          </label>
+          <label>
+            Hours
+            <input min="0.25" max="24" step="0.25" type="number" value={hours} onChange={(event) => setHours(event.target.value)} />
+          </label>
+          <label>
+            Description
+            <input maxLength={200} value={description} onChange={(event) => setDescription(event.target.value)} />
+          </label>
+          <button type="button" onClick={() => void prepare()}>
+            Prepare dry-run
+          </button>
+        </>
+      )}
+      {preview && (
+        <div className="privacy-preview">
+          <strong>DRY RUN · Calendar suggestion</strong>
+          <pre>{JSON.stringify(preview.preview, null, 2)}</pre>
+          <button type="button" onClick={() => void confirm()}>
+            Explicitly confirm
+          </button>
+          <button type="button" onClick={() => setPreview(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+      {notice && <p>{notice}</p>}
+    </details>
+  );
+}
+
 function ReportControls({ actorId }: { actorId: number }) {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -973,6 +1138,7 @@ export function ChatWorkspace() {
           </p>
         </div>
         <PrivacyControls actorId={actorId} key={actorId} />
+        <IntegrationReview actorId={actorId} key={`integration-${actorId}`} />
         <ReportControls actorId={actorId} key={`report-${actorId}`} />
         <AdminControls actorId={actorId} key={`admin-${actorId}`} />
       </aside>

@@ -20,7 +20,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy import case, func, select, update
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from .auth import ActorDep, SessionDep, require_visible_employee, visible_employee_ids
@@ -32,10 +32,13 @@ from .models import (
     AuditEvent,
     Department,
     Employee,
+    IntegrationSource,
+    IntegrationSuggestion,
     PendingAction,
     Project,
     ProjectMember,
     TimeEntry,
+    TimeEntrySourceLink,
 )
 from .schemas import (
     ApprovalDryRunRequest,
@@ -47,6 +50,8 @@ from .schemas import (
     DryRunResponse,
     EmployeeOut,
     MonthlyHoursStat,
+    IntegrationSuggestionOut,
+    IntegrationSuggestionPrepareRequest,
     ProjectHoursStat,
     ProjectMemberOut,
     ProjectOut,
@@ -968,6 +973,140 @@ def create_app(
             expires_at=action.expires_at,
         )
 
+    @app.get(
+        "/integration-suggestions",
+        response_model=list[IntegrationSuggestionOut],
+        tags=["integrations"],
+    )
+    def list_integration_suggestions(
+        session: SessionDep, actor: ActorDep
+    ) -> list[dict]:
+        now = _utcnow()
+        expired = list(
+            session.scalars(
+                select(IntegrationSuggestion).where(
+                    IntegrationSuggestion.actor_id == actor.id,
+                    IntegrationSuggestion.status.in_(["suggested", "previewed"]),
+                    IntegrationSuggestion.expires_at < now,
+                )
+            )
+        )
+        for suggestion in expired:
+            suggestion.status = "expired"
+        if expired:
+            session.commit()
+        suggestions = session.execute(
+            select(IntegrationSuggestion, Project, IntegrationSource)
+            .join(Project, Project.id == IntegrationSuggestion.project_id)
+            .join(
+                IntegrationSource,
+                IntegrationSource.integration_id
+                == IntegrationSuggestion.integration_id,
+            )
+            .where(
+                IntegrationSuggestion.actor_id == actor.id,
+                IntegrationSuggestion.status.in_(["suggested", "previewed"]),
+            )
+            .order_by(
+                IntegrationSuggestion.updated_at.desc(),
+                IntegrationSuggestion.id,
+            )
+        ).all()
+        return [
+            {
+                "id": suggestion.id,
+                "source_label": f"Google Calendar · {source.mode}",
+                "status": suggestion.status,
+                "person_ref": suggestion.person_ref,
+                "project_id": suggestion.project_id,
+                "project_code": suggestion.project_code,
+                "project_name": project.name,
+                "work_date": suggestion.work_date,
+                "hours": Decimal(suggestion.duration_minutes) / Decimal(60),
+                "description": suggestion.description,
+                "expires_at": suggestion.expires_at,
+            }
+            for suggestion, project, source in suggestions
+        ]
+
+    @app.post(
+        "/integration-suggestions/{suggestion_id}/prepare",
+        response_model=DryRunResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["integrations"],
+    )
+    def prepare_integration_suggestion(
+        suggestion_id: str,
+        body: IntegrationSuggestionPrepareRequest,
+        session: SessionDep,
+        actor: ActorDep,
+    ) -> DryRunResponse:
+        suggestion = session.scalar(
+            select(IntegrationSuggestion).where(
+                IntegrationSuggestion.id == suggestion_id,
+                IntegrationSuggestion.actor_id == actor.id,
+            )
+        )
+        if suggestion is None:
+            raise HTTPException(404, "Integration suggestion not found")
+        if suggestion.expires_at < _utcnow():
+            suggestion.status = "expired"
+            session.commit()
+            raise HTTPException(410, "Integration suggestion has expired")
+        if suggestion.status not in {"suggested", "previewed"}:
+            raise HTTPException(409, "Integration suggestion is not reviewable")
+        if session.scalar(
+            select(TimeEntrySourceLink).where(
+                TimeEntrySourceLink.integration_id == suggestion.integration_id,
+                TimeEntrySourceLink.source_event_key
+                == suggestion.source_event_key,
+            )
+        ):
+            raise HTTPException(409, "Integration source is already confirmed")
+        source = session.scalar(
+            select(IntegrationSource).where(
+                IntegrationSource.integration_id == suggestion.integration_id
+            )
+        )
+        if source is None or not source.enabled:
+            raise HTTPException(409, "Integration source is disabled")
+
+        draft = TimeEntryDraftRequest(
+            employee_id=actor.id,
+            project_id=body.project_id,
+            work_date=body.work_date,
+            hours=body.hours,
+            description=body.description,
+        )
+        payload, preview = _prepare_time_entry_preview(session, actor, draft)
+        validation = _require_valid_time_entry_proposals(session, [payload])
+        preview.update(
+            {
+                "validation": validation[0],
+                "source": f"Google Calendar · {source.mode}",
+                "suggestion_id": suggestion.id,
+            }
+        )
+        payload.update(
+            {
+                "suggestion_id": suggestion.id,
+                "integration_id": suggestion.integration_id,
+                "source_event_key": suggestion.source_event_key,
+                "revision_key": suggestion.current_revision_key,
+            }
+        )
+        action = _pending_action(
+            session, actor, "create_integration_time_entry", payload
+        )
+        suggestion.status = "previewed"
+        session.commit()
+        return DryRunResponse(
+            action="create_integration_time_entry",
+            preview=_serialize_preview(preview),
+            confirmation_token=action.token,
+            expires_at=action.expires_at,
+        )
+
     @app.post(
         "/time-entries/batch/dry-run",
         response_model=DryRunResponse,
@@ -1278,7 +1417,90 @@ def create_app(
             )
 
         payload = json.loads(action.payload)
-        if action.action_type == "create_time_entry":
+        audit_details = payload
+        if action.action_type == "create_integration_time_entry":
+            suggestion = session.scalar(
+                select(IntegrationSuggestion).where(
+                    IntegrationSuggestion.id == payload["suggestion_id"],
+                    IntegrationSuggestion.actor_id == actor.id,
+                )
+            )
+            if suggestion is None:
+                raise HTTPException(409, "Integration suggestion no longer exists")
+            if suggestion.status != "previewed":
+                raise HTTPException(409, "Integration suggestion is not prepared")
+            if suggestion.expires_at < _utcnow():
+                raise HTTPException(410, "Integration suggestion has expired")
+            if (
+                suggestion.current_revision_key != payload["revision_key"]
+                or suggestion.source_event_key != payload["source_event_key"]
+                or suggestion.integration_id != payload["integration_id"]
+            ):
+                raise HTTPException(409, "Integration suggestion changed after preview")
+            if session.scalar(
+                select(TimeEntrySourceLink).where(
+                    TimeEntrySourceLink.integration_id
+                    == suggestion.integration_id,
+                    TimeEntrySourceLink.source_event_key
+                    == suggestion.source_event_key,
+                )
+            ):
+                raise HTTPException(409, "Integration source is already confirmed")
+            _require_valid_time_entry_proposals(session, [payload])
+            employee = session.get(Employee, payload["employee_id"])
+            project = session.get(Project, payload["project_id"])
+            membership = session.scalar(
+                select(ProjectMember).where(
+                    ProjectMember.employee_id == payload["employee_id"],
+                    ProjectMember.project_id == payload["project_id"],
+                )
+            )
+            if (
+                employee is None
+                or project is None
+                or project.status != "active"
+                or membership is None
+                or employee.id != actor.id
+            ):
+                raise HTTPException(
+                    409, "Integration mapping or membership changed after preview"
+                )
+            entry = TimeEntry(
+                employee_id=employee.id,
+                project_id=project.id,
+                work_date=date.fromisoformat(payload["work_date"]),
+                hours=Decimal(payload["hours"]),
+                description=payload["description"],
+                status="draft",
+            )
+            session.add(entry)
+            session.flush()
+            session.add(
+                TimeEntrySourceLink(
+                    integration_id=suggestion.integration_id,
+                    source_event_key=suggestion.source_event_key,
+                    suggestion_id=suggestion.id,
+                    time_entry_id=entry.id,
+                )
+            )
+            suggestion.status = "confirmed"
+            try:
+                session.flush()
+            except IntegrityError as exc:
+                session.rollback()
+                raise HTTPException(
+                    409, "Integration source is already confirmed"
+                ) from exc
+            result = TimeEntryOut.model_validate(entry).model_dump(mode="json")
+            resource_id = str(entry.id)
+            audit_details = {
+                "integration_id": suggestion.integration_id,
+                "suggestion_id": suggestion.id,
+                "source_event_key": suggestion.source_event_key,
+                "revision_key": suggestion.current_revision_key,
+                "status": suggestion.status,
+            }
+        elif action.action_type == "create_time_entry":
             _require_valid_time_entry_proposals(session, [payload])
             employee = session.get(Employee, payload["employee_id"])
             project = session.get(Project, payload["project_id"])
@@ -1504,7 +1726,7 @@ def create_app(
                 action=action.action_type,
                 resource_type="time_entry",
                 resource_id=resource_id,
-                details=json.dumps(payload),
+                details=json.dumps(audit_details),
             )
         )
         session.commit()

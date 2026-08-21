@@ -118,6 +118,45 @@ describe("ChatWorkspace", () => {
     expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
+  it("keeps simulated Calendar suggestions behind review and confirmation", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify([{
+        id: "77777777-7777-4777-8777-777777777777",
+        source_label: "Google Calendar · simulated",
+        status: "suggested",
+        project_id: 1,
+        project_name: "Apollo",
+        work_date: "2026-08-21",
+        hours: "1.50",
+        description: "Prepared fictional workshop",
+        expires_at: "2026-09-04T10:00:00Z",
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        action: "create_integration_time_entry",
+        preview: { source: "Google Calendar · simulated", hours: "1.50" },
+        confirmation_token: "88888888-8888-4888-8888-888888888888",
+      }), { status: 201, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        action: "create_integration_time_entry",
+        result: { id: 42, status: "draft" },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const user = userEvent.setup();
+    render(<ChatWorkspace />);
+
+    await user.click(screen.getByText("Simulated Calendar review"));
+    await user.click(screen.getByRole("button", { name: "Load my suggestions" }));
+    expect(await screen.findByText("Google Calendar · simulated")).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Prepare dry-run" }));
+    expect(await screen.findByText("DRY RUN · Calendar suggestion")).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await user.click(screen.getByRole("button", { name: "Explicitly confirm" }));
+    expect(await screen.findByText(/Time entry confirmed from the simulated/)).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("renders multi-tool comparison rows and deltas", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

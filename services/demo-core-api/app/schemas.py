@@ -176,3 +176,26 @@ class SummaryStat(BaseModel):
     submitted_hours: Decimal
     approved_hours: Decimal
     rejected_hours: Decimal
+
+
+class IntegrationSuggestionOut(BaseModel):
+    id: str
+    source_label: str
+    status: Literal["suggested", "previewed", "confirmed", "expired", "superseded"]
+    person_ref: str
+    project_id: int
+    project_code: str
+    project_name: str
+    work_date: date
+    hours: Decimal
+    description: str
+    expires_at: datetime
+
+
+class IntegrationSuggestionPrepareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: int = Field(ge=1)
+    work_date: date
+    hours: Decimal = Field(gt=0, le=24, max_digits=4, decimal_places=2)
+    description: str = Field(min_length=1, max_length=200)
