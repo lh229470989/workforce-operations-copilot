@@ -25,6 +25,9 @@ tests, and local deployment path.
 ▶ [Watch the 80-second product walkthrough](https://github.com/lh229470989/workforce-operations-copilot/releases/download/portfolio-demo-v1/workforce-operations-copilot-demo.webm)
 or [open the recording script and shot list](docs/portfolio-demo.md).
 
+For client-facing packaging, see the paste-ready
+[Upwork SMB AI Automation project package](docs/upwork-project-package.md).
+
 ## What a client can verify
 
 - **Natural language to workflow:** policy lookup, role-scoped reporting,

@@ -16,6 +16,7 @@
 9. [作品集演示材料](portfolio-demo.md)：查看 60–90 秒视频脚本、截图清单和 Upwork 文案。
 10. [SMB Calendar → Copilot → Slack 集成设计](smb-integration-design.md)：评审第二阶段 Schema、n8n、签名、幂等、重试、mock 与凭据边界。
 11. [n8n 模板设置与恢复](../integrations/n8n/README.md)：导入两个 credential-free 模板，配置私有测试环境并处理失败。
+12. [Upwork SMB AI Automation 项目包](upwork-project-package.md)：复制 Project Catalog 标题、描述、分档、要求、FAQ、提案开场、55 秒脚本与剩余人工清单。
 
 ## 快速定位
 
