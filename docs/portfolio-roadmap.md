@@ -31,7 +31,7 @@
 | 阶段 | 目标 | 状态 |
 | --- | --- | --- |
 | 第一阶段 | 让当前项目达到可直接用于 Upwork 投递的展示质量 | 已完成：PR CI、合并、干净环境录制和公开视频 URL 均已闭环 |
-| 第二阶段 | 增加一个贴近中小企业场景的真实自动化纵向案例 | 实现中：Outbox notification 已完成，下一批为 n8n templates |
+| 第二阶段 | 增加一个贴近中小企业场景的真实自动化纵向案例 | 实现中：公共代码、两个 n8n 模板与 mock 证据已完成；仅余私有账号验证与录像 |
 | 第三阶段 | 补齐常见交付能力和 Upwork 需求关键词 | 待开始 |
 | 第四阶段 | 根据真实投递与客户反馈选择专业化方向 | 待开始 |
 
@@ -192,6 +192,20 @@ Workflow B：confirmed event / webhook
 触发业务写入；幂等键由 calendar ID、event ID 和更新时间生成；同一事件
 重复触发不能产生重复记录；Slack 只通知确认成功后的可信结果；真实凭据不
 参加 CI，CI 只使用 fixtures、mock server 和 contract tests。
+
+### n8n 模板实施证据（2026-08-21）
+
+- 两个禁用状态、无凭据的公开模板保存在 `integrations/n8n/`，分别负责只读
+  Calendar → suggestion 与 confirmed event → Slack delivery；
+- Workflow A 只映射显式 private marker 与四个允许字段，不携带原 Calendar
+  payload，也不包含人工等待或确认节点；
+- Workflow B 在 Slack 节点前强制 raw-body HMAC 校验和持久 delivery claim，
+  固定消息字段，并以一秒 gate 限速；
+- `scripts/scan_n8n_templates.py` 在 CI 中检查节点顺序、无凭据导出、runtime-only
+  secret、受限字段与禁止值；全仓 publication security scan 同时覆盖模板；
+- 两份 JSON 已在全新 `n8nio/n8n:2.34.6` 容器中通过 CLI 导入，结果为
+  `Successfully imported 2 workflows`；真实 Google/Slack 执行只在后续私有录制
+  环境中完成，不作为公共 Demo 或 CI 的前置条件。
 
 设计依据：[Google Calendar API 配额与 test-only project](https://developers.google.com/workspace/calendar/api/guides/quota)、
 [Google Calendar OAuth scopes](https://developers.google.com/workspace/calendar/api/auth)、

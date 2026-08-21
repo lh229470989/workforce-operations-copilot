@@ -15,6 +15,7 @@
 8. [SMB AI 自动化作品集路线图](portfolio-roadmap.md)：查看后续作品集、真实集成和交付能力建设计划。
 9. [作品集演示材料](portfolio-demo.md)：查看 60–90 秒视频脚本、截图清单和 Upwork 文案。
 10. [SMB Calendar → Copilot → Slack 集成设计](smb-integration-design.md)：评审第二阶段 Schema、n8n、签名、幂等、重试、mock 与凭据边界。
+11. [n8n 模板设置与恢复](../integrations/n8n/README.md)：导入两个 credential-free 模板，配置私有测试环境并处理失败。
 
 ## 快速定位
 

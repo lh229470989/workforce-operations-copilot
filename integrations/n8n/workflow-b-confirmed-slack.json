@@ -1,0 +1,104 @@
+{
+  "name": "SMB Demo - Confirmed Time Entry to Slack",
+  "nodes": [
+    {
+      "parameters": {"httpMethod": "POST", "path": "copilot-confirmed-v1", "responseMode": "onReceived", "options": {"rawBody": true}},
+      "id": "708f09a1-f92e-4e30-8171-0affd43da87f",
+      "name": "Confirmed Event Webhook Raw Body",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-960, 0],
+      "webhookId": "c5be088e-b95c-4aef-9ae8-3c6d20920b19"
+    },
+    {
+      "parameters": {"jsCode": "const crypto = require('crypto');\nconst secret = $env.COPILOT_OUTBOUND_HMAC_SECRET;\nif (!secret) throw new Error('COPILOT_OUTBOUND_HMAC_SECRET is required');\nconst headers = Object.fromEntries(Object.entries($json.headers || {}).map(([k,v]) => [k.toLowerCase(), String(v)]));\nconst timestamp = headers['x-acme-timestamp'];\nconst nonce = headers['x-acme-nonce'];\nconst supplied = headers['x-acme-signature'] || '';\nconst raw = typeof $json.rawBody === 'string' ? $json.rawBody : (typeof $json.body === 'string' ? $json.body : '');\nif (!raw || !timestamp || !nonce || !/^v1=[a-f0-9]{64}$/.test(supplied)) throw new Error('invalid_signature');\nif (Math.abs(Math.floor(Date.now()/1000) - Number(timestamp)) > 300) throw new Error('expired_signature');\nconst path = $env.COPILOT_OUTBOUND_WEBHOOK_PATH;\nif (!path) throw new Error('COPILOT_OUTBOUND_WEBHOOK_PATH is required');\nconst digest = crypto.createHash('sha256').update(raw).digest('hex');\nconst base = ['v1',timestamp,nonce,'POST',path,digest].join('\\n');\nconst expected = 'v1=' + crypto.createHmac('sha256',secret).update(base).digest('hex');\nif (supplied.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(expected))) throw new Error('invalid_signature');\nconst event = JSON.parse(raw);\nconst keys = Object.keys(event).sort().join(',');\nconst resultKeys = Object.keys(event.result || {}).sort().join(',');\nif (keys !== 'event_id,event_type,occurred_at,request_id,result,schema_version' || resultKeys !== 'hours,person_display_name,project_display_name,status,time_entry_id,work_date' || event.schema_version !== '1.0' || event.event_type !== 'time_entry.confirmed' || !/^[0-9a-f-]{36}$/i.test(event.event_id)) throw new Error('invalid_confirmed_event');\nreturn [{json:{event}}];"},
+      "id": "d710f66d-e250-46ba-866e-40820e7c1601",
+      "name": "Verify HMAC Then Validate Confirmed Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-720, 0]
+    },
+    {
+      "parameters": {"jsCode": "const crypto = require('crypto');\nconst event = $json.event; const path = '/api/v1/integrations/notifications/' + event.event_id + ':claim'; const body = JSON.stringify({channel_ref:$env.SLACK_CHANNEL_REF}); const timestamp=Math.floor(Date.now()/1000).toString(); const nonce=crypto.randomUUID(); const digest=crypto.createHash('sha256').update(body).digest('hex'); const base=['v1',timestamp,nonce,'POST',path,digest].join('\\n'); const secret=$env.COPILOT_NOTIFICATION_CALLBACK_HMAC_SECRET; if(!secret || !$env.SLACK_CHANNEL_REF) throw new Error('callback secret and channel ref are required'); const signature='v1='+crypto.createHmac('sha256',secret).update(base).digest('hex'); return [{json:{event,path,body,timestamp,nonce,signature}}];"},
+      "id": "33b0c767-96f0-46ee-a4d5-e28938354937",
+      "name": "Sign Delivery Claim",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-480, 0]
+    },
+    {
+      "parameters": {"method": "POST", "url": "={{ $env.COPILOT_CORE_BASE_URL + $json.path }}", "sendHeaders": true, "headerParameters": {"parameters": [{"name":"Content-Type","value":"application/json"},{"name":"X-Acme-Integration-Id","value":"n8n-notification-v1"},{"name":"X-Acme-Timestamp","value":"={{ $json.timestamp }}"},{"name":"X-Acme-Nonce","value":"={{ $json.nonce }}"},{"name":"X-Acme-Signature","value":"={{ $json.signature }}"}]}, "sendBody": true, "contentType": "raw", "rawContentType": "application/json", "body": "={{ $json.body }}", "options": {"timeout":10000,"response":{"response":{"fullResponse":true,"neverError":true,"responseFormat":"json"}}}},
+      "id": "7c88c8d0-a08e-49c1-a38d-a27e26430827",
+      "name": "Claim Before Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-240, 0]
+    },
+    {
+      "parameters": {"conditions": {"options": {"caseSensitive": true, "typeValidation": "strict"}, "conditions": [{"id":"a18b971b-6f19-4b83-bc51-11e1e3e3b30c","leftValue":"={{ $json.body.claim_granted }}","rightValue":true,"operator":{"type":"boolean","operation":"true","singleValue":true}}], "combinator":"and"}, "options": {}},
+      "id": "bdc91c91-d33c-4585-9298-bce35282f9f7",
+      "name": "Claim Granted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {"jsCode": "const event=$('Verify HMAC Then Validate Confirmed Event').first().json.event; const attempt=$json.body.delivery_attempt_id; const r=event.result; const text=['Time entry confirmed',r.person_display_name+' · '+r.project_display_name,r.work_date+' · '+r.hours+' hours · '+r.status,'Reference: time entry #'+r.time_entry_id].join('\\n'); return [{json:{event,delivery_attempt_id:attempt,slack_body:JSON.stringify({text})}}];"},
+      "id": "774851b0-d127-4c5f-800a-4c7fa33bf644",
+      "name": "Build Fixed Slack Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, -96]
+    },
+    {
+      "parameters": {"amount": 1, "unit": "seconds"},
+      "id": "ed39034b-afd6-493a-a45c-3bd398633068",
+      "name": "One Message Per Second Gate",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [480, -96],
+      "webhookId": "686570c0-90ef-457d-9976-8c01837e3342"
+    },
+    {
+      "parameters": {"method":"POST","url":"={{ $env.SLACK_WEBHOOK_URL }}","sendBody":true,"contentType":"raw","rawContentType":"application/json","body":"={{ $json.slack_body }}","options":{"timeout":10000,"response":{"response":{"fullResponse":true,"neverError":true,"responseFormat":"text"}}}},
+      "id": "db415c66-993f-46c4-9586-34a2ce046ec8",
+      "name": "Slack Incoming Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, -96]
+    },
+    {
+      "parameters": {"jsCode": "const crypto=require('crypto'); const prior=$('Build Fixed Slack Payload').first().json; const statusCode=Number($json.statusCode || 0); const status=statusCode >= 200 && statusCode < 300 ? 'delivered' : (statusCode ? 'failed' : 'delivery_unknown'); const path='/api/v1/integrations/notifications/'+prior.event.event_id+':complete'; const body=JSON.stringify({delivery_attempt_id:prior.delivery_attempt_id,status}); const timestamp=Math.floor(Date.now()/1000).toString(); const nonce=crypto.randomUUID(); const digest=crypto.createHash('sha256').update(body).digest('hex'); const base=['v1',timestamp,nonce,'POST',path,digest].join('\\n'); const secret=$env.COPILOT_NOTIFICATION_CALLBACK_HMAC_SECRET; const signature='v1='+crypto.createHmac('sha256',secret).update(base).digest('hex'); return [{json:{path,body,timestamp,nonce,signature}}];"},
+      "id": "3268f0e6-2ff0-4e71-a5fa-a35f6b729339",
+      "name": "Classify Result and Sign Completion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, -96]
+    },
+    {
+      "parameters": {"method":"POST","url":"={{ $env.COPILOT_CORE_BASE_URL + $json.path }}","sendHeaders":true,"headerParameters":{"parameters":[{"name":"Content-Type","value":"application/json"},{"name":"X-Acme-Integration-Id","value":"n8n-notification-v1"},{"name":"X-Acme-Timestamp","value":"={{ $json.timestamp }}"},{"name":"X-Acme-Nonce","value":"={{ $json.nonce }}"},{"name":"X-Acme-Signature","value":"={{ $json.signature }}"}]},"sendBody":true,"contentType":"raw","rawContentType":"application/json","body":"={{ $json.body }}","options":{"timeout":10000}},
+      "id": "859681f9-0364-4639-aeb8-decc6acef65d",
+      "name": "Complete Delivery Ledger",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, -96]
+    }
+  ],
+  "connections": {
+    "Confirmed Event Webhook Raw Body":{"main":[[{"node":"Verify HMAC Then Validate Confirmed Event","type":"main","index":0}]]},
+    "Verify HMAC Then Validate Confirmed Event":{"main":[[{"node":"Sign Delivery Claim","type":"main","index":0}]]},
+    "Sign Delivery Claim":{"main":[[{"node":"Claim Before Slack","type":"main","index":0}]]},
+    "Claim Before Slack":{"main":[[{"node":"Claim Granted?","type":"main","index":0}]]},
+    "Claim Granted?":{"main":[[{"node":"Build Fixed Slack Payload","type":"main","index":0}],[]]},
+    "Build Fixed Slack Payload":{"main":[[{"node":"One Message Per Second Gate","type":"main","index":0}]]},
+    "One Message Per Second Gate":{"main":[[{"node":"Slack Incoming Webhook","type":"main","index":0}]]},
+    "Slack Incoming Webhook":{"main":[[{"node":"Classify Result and Sign Completion","type":"main","index":0}]]},
+    "Classify Result and Sign Completion":{"main":[[{"node":"Complete Delivery Ledger","type":"main","index":0}]]}
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {"executionOrder":"v1"},
+  "versionId": "03a9a2ca-29e4-4a3d-b260-bd4fcaf2e40e",
+  "meta": {"templateCredsSetupCompleted": false},
+  "tags": []
+}
