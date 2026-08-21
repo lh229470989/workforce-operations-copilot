@@ -25,6 +25,8 @@ from sqlalchemy.orm import Session
 
 from .auth import ActorDep, SessionDep, require_visible_employee, visible_employee_ids
 from .database import Base, build_engine, build_session_factory, get_session
+from .integrations.config import IngestIntegrationConfig, sync_integration_config
+from .integrations.ingest import register_ingest_routes
 from .models import (
     Approval,
     AuditEvent,
@@ -345,7 +347,11 @@ def _weekly_report_data(
     }
 
 
-def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
+def create_app(
+    database_url: str | None = None,
+    seed: bool = True,
+    integration_config: IngestIntegrationConfig | None = None,
+) -> FastAPI:
     resolved_url = database_url or os.getenv("DEMO_DATABASE_URL", DEFAULT_DATABASE_URL)
     if resolved_url.startswith("sqlite:///") and ":memory:" not in resolved_url:
         db_path = Path(resolved_url.removeprefix("sqlite:///"))
@@ -353,13 +359,15 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
 
     engine = build_engine(resolved_url)
     session_factory = build_session_factory(engine)
+    resolved_integration_config = integration_config or IngestIntegrationConfig.from_env()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         Base.metadata.create_all(engine)
-        if seed:
-            with session_factory() as session:
+        with session_factory() as session:
+            if seed:
                 seed_demo_data(session, today=_business_today())
+            sync_integration_config(session, resolved_integration_config)
         yield
         engine.dispose()
 
@@ -373,6 +381,7 @@ def create_app(database_url: str | None = None, seed: bool = True) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.session_factory = session_factory
+    register_ingest_routes(app, resolved_integration_config)
 
     @app.get("/health", tags=["system"])
     def health() -> dict[str, str]:

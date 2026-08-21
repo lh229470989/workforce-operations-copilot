@@ -1,6 +1,6 @@
 # SMB Calendar → Copilot → Slack 集成设计
 
-状态：**设计已批准，Contracts 已完成，Ingest persistence 未开始**
+状态：**设计已批准，Contracts 与 Ingest persistence 已完成，Web review 未开始**
 
 版本：`v1-approved`
 
@@ -536,7 +536,7 @@ CI 不使用真实凭据。
 设计通过后按独立 PR 推进：
 
 1. **Contracts（已完成）**：JSON Schema、Pydantic、HMAC test vectors、fixtures；
-2. **Ingest persistence**：suggestion、nonce、source link、idempotency；
+2. **Ingest persistence（已完成）**：suggestion、nonce、source link、idempotency；
 3. **Web review**：建议列表、prepare、现有 Core confirmation 复用；
 4. **Outbox notification**：confirmed event、delivery ledger、mock Slack；
 5. **n8n templates**：两个 JSON、锁定版本导入验证、setup 文档；

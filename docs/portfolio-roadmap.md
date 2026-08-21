@@ -31,7 +31,7 @@
 | 阶段 | 目标 | 状态 |
 | --- | --- | --- |
 | 第一阶段 | 让当前项目达到可直接用于 Upwork 投递的展示质量 | 已完成：PR CI、合并、干净环境录制和公开视频 URL 均已闭环 |
-| 第二阶段 | 增加一个贴近中小企业场景的真实自动化纵向案例 | 实现中：Contracts 已完成，下一批为 Ingest persistence |
+| 第二阶段 | 增加一个贴近中小企业场景的真实自动化纵向案例 | 实现中：Contracts 与 Ingest persistence 已完成，下一批为 Web review |
 | 第三阶段 | 补齐常见交付能力和 Upwork 需求关键词 | 待开始 |
 | 第四阶段 | 根据真实投递与客户反馈选择专业化方向 | 待开始 |
 
@@ -302,3 +302,4 @@ Workflow B：confirmed event / webhook
 | 2026-08-13 | 第二阶段采用 Google Calendar 只读输入、Slack Incoming Webhook 确认后通知和两个独立 n8n 模板 | 最小权限、避免长时间等待的 n8n 执行、阻止外部事件绕过人工确认，并便于 SMB 客户理解和复用 |
 | 2026-08-17 | 第二阶段设计评审通过，n8n 验证基线锁定为 `2.34.6`，先实现 Contracts 批次 | 先冻结机器合同和跨系统签名测试向量，降低后续持久化、UI 与 workflow 模板之间的返工风险 |
 | 2026-08-19 | 第二阶段设计合并，Contracts 批次完成 | 用无凭据 JSON Schema、Pydantic、固定 HMAC/幂等向量和虚构 fixtures 锁定跨系统边界；nonce 与数据库幂等进入 persistence 批次 |
+| 2026-08-21 | Ingest persistence 批次完成 | 签名入口只创建建议；runtime secret、nonce 重放、映射、修订历史与 source 唯一约束均由服务端控制，下一批接入 Web review |

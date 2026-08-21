@@ -58,6 +58,7 @@ All endpoints except `/health` require `X-Actor-ID`.
 | POST | `/time-entries/batch/dry-run` | Preview up to 10 time-entry drafts |
 | POST | `/time-entries/{id}/approval/dry-run` | Preview approval/rejection |
 | POST | `/actions/{token}/confirm` | Explicitly confirm a preview |
+| POST | `/api/v1/integrations/work-events:ingest` | Signed WorkEvent ingestion; creates a suggestion only |
 
 ### Two-step write example
 
@@ -96,6 +97,20 @@ The lifecycle API also supports dry-run update, delete, submit, withdraw, and
 atomic batch approval. `GET /reports/time-entries.csv` reuses the list filters
 and role scope. `/audit-events` and `/audit-events/stats` are admin-only and
 omit payload details by default.
+
+## Signed integration ingest
+
+The WorkEvent endpoint is disabled unless `COPILOT_INGEST_HMAC_SECRET` is set at
+runtime. It validates the exact raw body signature, a ±300 second timestamp,
+a one-use nonce, the versioned WorkEvent contract, source/person/project
+mappings, membership, date window and revision idempotency key. A valid request
+creates or updates `IntegrationSuggestion`; it never creates a `PendingAction`,
+confirmation token or time entry.
+
+Source account and Calendar identifiers are stored only as SHA-256 hashes.
+Runtime secrets are never stored in SQLite. The optional
+`COPILOT_INGEST_HMAC_SECRET_NEXT` supports a bounded key-rotation window. Public
+CI uses fictional fixed keys and fixtures only.
 
 ## Tests
 
