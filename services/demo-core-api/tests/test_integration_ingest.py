@@ -16,6 +16,7 @@ from app.models import (
     IntegrationSuggestion,
     IntegrationSuggestionRevision,
     IntegrationSource,
+    ProjectMember,
     TimeEntry,
     TimeEntrySourceLink,
 )
@@ -269,3 +270,141 @@ def test_integration_is_disabled_without_runtime_secret(client):
 
     assert response.status_code == 403
     assert response.json()["code"] == "integration_disabled"
+
+
+def ingest_one(client) -> dict:
+    event = work_event()
+    body, headers = signed_request(event)
+    response = client.post(INGEST_PATH, content=body, headers=headers)
+    assert response.status_code == 201
+    return {"event": event, "suggestion": response.json()}
+
+
+def test_actor_can_list_and_prepare_own_integration_suggestion(integration_client):
+    client, app = integration_client
+    created = ingest_one(client)
+
+    own = client.get("/integration-suggestions", headers={"X-Actor-ID": "3"})
+    other = client.get("/integration-suggestions", headers={"X-Actor-ID": "2"})
+
+    assert own.status_code == 200
+    assert len(own.json()) == 1
+    assert own.json()[0]["source_label"] == "Google Calendar · simulated"
+    assert other.json() == []
+    with app.state.session_factory() as session:
+        entries_before = session.scalar(select(func.count(TimeEntry.id)))
+
+    prepared = client.post(
+        f"/integration-suggestions/{created['suggestion']['suggestion_id']}/prepare",
+        headers={"X-Actor-ID": "3"},
+        json={
+            "project_id": 1,
+            "work_date": created["event"]["work_date"],
+            "hours": "1.50",
+            "description": "Edited fictional workshop review",
+        },
+    )
+
+    assert prepared.status_code == 201
+    assert prepared.json()["action"] == "create_integration_time_entry"
+    assert prepared.json()["preview"]["source"].endswith("simulated")
+    with app.state.session_factory() as session:
+        assert session.scalar(select(func.count(TimeEntry.id))) == entries_before
+
+
+def test_integration_confirmation_writes_once_and_links_source(integration_client):
+    client, app = integration_client
+    created = ingest_one(client)
+    suggestion_id = created["suggestion"]["suggestion_id"]
+    prepared = client.post(
+        f"/integration-suggestions/{suggestion_id}/prepare",
+        headers={"X-Actor-ID": "3"},
+        json={
+            "project_id": 1,
+            "work_date": created["event"]["work_date"],
+            "hours": "1.50",
+            "description": "Confirmed fictional workshop review",
+        },
+    ).json()
+
+    confirmed = client.post(
+        f"/actions/{prepared['confirmation_token']}/confirm",
+        headers={"X-Actor-ID": "3"},
+        json={"confirm": True},
+    )
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["action"] == "create_integration_time_entry"
+    assert confirmed.json()["result"]["description"] == (
+        "Confirmed fictional workshop review"
+    )
+    assert client.get(
+        "/integration-suggestions", headers={"X-Actor-ID": "3"}
+    ).json() == []
+    with app.state.session_factory() as session:
+        link = session.scalar(select(TimeEntrySourceLink))
+        assert link.suggestion_id == suggestion_id
+        suggestion = session.get(IntegrationSuggestion, suggestion_id)
+        assert suggestion.status == "confirmed"
+        audit = session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.action == "create_integration_time_entry"
+            )
+        )
+        assert "Confirmed fictional workshop review" not in audit.details
+
+    repeated = client.post(
+        f"/actions/{prepared['confirmation_token']}/confirm",
+        headers={"X-Actor-ID": "3"},
+        json={"confirm": True},
+    )
+    assert repeated.status_code == 409
+
+
+def test_prepare_and_confirmation_recheck_actor_revision_and_membership(
+    integration_client,
+):
+    client, app = integration_client
+    created = ingest_one(client)
+    suggestion_id = created["suggestion"]["suggestion_id"]
+    forbidden = client.post(
+        f"/integration-suggestions/{suggestion_id}/prepare",
+        headers={"X-Actor-ID": "2"},
+        json={
+            "project_id": 1,
+            "work_date": created["event"]["work_date"],
+            "hours": "1.50",
+            "description": "Unauthorized review",
+        },
+    )
+    assert forbidden.status_code == 404
+
+    prepared = client.post(
+        f"/integration-suggestions/{suggestion_id}/prepare",
+        headers={"X-Actor-ID": "3"},
+        json={
+            "project_id": 1,
+            "work_date": created["event"]["work_date"],
+            "hours": "1.50",
+            "description": "Membership recheck",
+        },
+    ).json()
+    with app.state.session_factory() as session:
+        membership = session.scalar(
+            select(ProjectMember).where(
+                ProjectMember.employee_id == 3,
+                ProjectMember.project_id == 1,
+            )
+        )
+        session.delete(membership)
+        session.commit()
+
+    confirmation = client.post(
+        f"/actions/{prepared['confirmation_token']}/confirm",
+        headers={"X-Actor-ID": "3"},
+        json={"confirm": True},
+    )
+
+    assert confirmation.status_code in {409, 422}
+    with app.state.session_factory() as session:
+        assert session.scalar(select(func.count(TimeEntrySourceLink.id))) == 0

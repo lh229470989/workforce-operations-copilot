@@ -59,6 +59,8 @@ All endpoints except `/health` require `X-Actor-ID`.
 | POST | `/time-entries/{id}/approval/dry-run` | Preview approval/rejection |
 | POST | `/actions/{token}/confirm` | Explicitly confirm a preview |
 | POST | `/api/v1/integrations/work-events:ingest` | Signed WorkEvent ingestion; creates a suggestion only |
+| GET | `/integration-suggestions` | List the current actor's reviewable external suggestions |
+| POST | `/integration-suggestions/{id}/prepare` | Revalidate and create an actor-bound dry-run |
 
 ### Two-step write example
 
@@ -111,6 +113,12 @@ Source account and Calendar identifiers are stored only as SHA-256 hashes.
 Runtime secrets are never stored in SQLite. The optional
 `COPILOT_INGEST_HMAC_SECRET_NEXT` supports a bounded key-rotation window. Public
 CI uses fictional fixed keys and fixtures only.
+
+The review endpoint only returns suggestions owned by the current actor. The
+prepare step accepts bounded editable business fields and rechecks membership,
+duplicate and daily-hours rules. Confirmation rechecks the current revision and
+atomically creates the time entry plus its unique source link, so a modified or
+already-confirmed Calendar source cannot create a second record.
 
 ## Tests
 
