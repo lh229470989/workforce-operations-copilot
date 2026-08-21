@@ -26,7 +26,9 @@ from sqlalchemy.orm import Session
 from .auth import ActorDep, SessionDep, require_visible_employee, visible_employee_ids
 from .database import Base, build_engine, build_session_factory, get_session
 from .integrations.config import IngestIntegrationConfig, sync_integration_config
+from .integrations.contracts import ConfirmedEventV1
 from .integrations.ingest import register_ingest_routes
+from .integrations.notifications import register_notification_routes
 from .models import (
     Approval,
     AuditEvent,
@@ -34,6 +36,7 @@ from .models import (
     Employee,
     IntegrationSource,
     IntegrationSuggestion,
+    IntegrationOutbox,
     PendingAction,
     Project,
     ProjectMember,
@@ -387,6 +390,7 @@ def create_app(
     )
     app.state.session_factory = session_factory
     register_ingest_routes(app, resolved_integration_config)
+    register_notification_routes(app, resolved_integration_config)
 
     @app.get("/health", tags=["system"])
     def health() -> dict[str, str]:
@@ -1483,6 +1487,37 @@ def create_app(
                     time_entry_id=entry.id,
                 )
             )
+            notification_event_id = str(uuid4())
+            confirmed_event = ConfirmedEventV1.model_validate(
+                {
+                    "schema_version": "1.0",
+                    "event_type": "time_entry.confirmed",
+                    "event_id": notification_event_id,
+                    "occurred_at": datetime.now(UTC).isoformat().replace(
+                        "+00:00", "Z"
+                    ),
+                    "request_id": f"req_{uuid4().hex}",
+                    "result": {
+                        "time_entry_id": entry.id,
+                        "person_display_name": employee.name,
+                        "project_display_name": project.name,
+                        "work_date": entry.work_date.isoformat(),
+                        "hours": f"{entry.hours:.2f}",
+                        "status": entry.status,
+                    },
+                }
+            )
+            session.add(
+                IntegrationOutbox(
+                    event_id=notification_event_id,
+                    event_type="time_entry.confirmed",
+                    suggestion_id=suggestion.id,
+                    payload=confirmed_event.model_dump_json(),
+                    status="queued",
+                    attempt_count=0,
+                    next_attempt_at=_utcnow(),
+                )
+            )
             suggestion.status = "confirmed"
             try:
                 session.flush()
@@ -1492,6 +1527,7 @@ def create_app(
                     409, "Integration source is already confirmed"
                 ) from exc
             result = TimeEntryOut.model_validate(entry).model_dump(mode="json")
+            result["notification_event_id"] = notification_event_id
             resource_id = str(entry.id)
             audit_details = {
                 "integration_id": suggestion.integration_id,

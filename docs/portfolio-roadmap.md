@@ -31,7 +31,7 @@
 | 阶段 | 目标 | 状态 |
 | --- | --- | --- |
 | 第一阶段 | 让当前项目达到可直接用于 Upwork 投递的展示质量 | 已完成：PR CI、合并、干净环境录制和公开视频 URL 均已闭环 |
-| 第二阶段 | 增加一个贴近中小企业场景的真实自动化纵向案例 | 实现中：Web review 已完成，下一批为 Outbox notification |
+| 第二阶段 | 增加一个贴近中小企业场景的真实自动化纵向案例 | 实现中：Outbox notification 已完成，下一批为 n8n templates |
 | 第三阶段 | 补齐常见交付能力和 Upwork 需求关键词 | 待开始 |
 | 第四阶段 | 根据真实投递与客户反馈选择专业化方向 | 待开始 |
 
@@ -304,3 +304,4 @@ Workflow B：confirmed event / webhook
 | 2026-08-19 | 第二阶段设计合并，Contracts 批次完成 | 用无凭据 JSON Schema、Pydantic、固定 HMAC/幂等向量和虚构 fixtures 锁定跨系统边界；nonce 与数据库幂等进入 persistence 批次 |
 | 2026-08-21 | Ingest persistence 批次完成 | 签名入口只创建建议；runtime secret、nonce 重放、映射、修订历史与 source 唯一约束均由服务端控制，下一批接入 Web review |
 | 2026-08-21 | Web review 批次完成 | 外部建议由 actor 单独查看、编辑和 prepare；确认时重新校验并原子写入工时与唯一 source link，n8n 与模型均拿不到 confirmation token |
+| 2026-08-21 | Outbox notification 批次完成 | 确认事务写入最小 confirmed event；持久 claim/complete ledger 阻止重复发送与未知结果自动重试，public UI 只展示 simulated preview |
