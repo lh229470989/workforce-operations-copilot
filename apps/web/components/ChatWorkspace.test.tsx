@@ -157,6 +157,31 @@ describe("ChatWorkspace", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("labels confirmed notification evidence as simulated", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify([{
+      delivery_mode: "simulated",
+      event_id: "99999999-9999-4999-8999-999999999999",
+      status: "queued",
+      event: { result: {
+        time_entry_id: 42,
+        person_display_name: "Jamie Rivera",
+        project_display_name: "Apollo",
+        work_date: "2026-08-21",
+        hours: "1.50",
+        status: "draft",
+      } },
+    }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const user = userEvent.setup();
+    render(<ChatWorkspace />);
+
+    await user.click(screen.getByText("Simulated Slack preview"));
+    await user.click(screen.getByRole("button", { name: "Load confirmed events" }));
+
+    expect(await screen.findByText("SIMULATED NOTIFICATION · queued")).toBeVisible();
+    expect(screen.getByText("Jamie Rivera · Apollo")).toBeVisible();
+    expect(screen.getByText(/No Slack request is sent/)).toBeVisible();
+  });
+
   it("renders multi-tool comparison rows and deltas", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

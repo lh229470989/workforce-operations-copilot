@@ -25,6 +25,8 @@ class IngestIntegrationConfig:
     integration_id: str = "n8n-calendar-v1"
     active_secret: bytes | None = None
     next_secret: bytes | None = None
+    notification_callback_secret: bytes | None = None
+    notification_callback_next_secret: bytes | None = None
     enabled: bool = False
     mode: str = "simulated"
     source_account_ref: str = "google-test-account-01"
@@ -40,9 +42,17 @@ class IngestIntegrationConfig:
     def from_env(cls) -> "IngestIntegrationConfig":
         active = os.getenv("COPILOT_INGEST_HMAC_SECRET")
         next_secret = os.getenv("COPILOT_INGEST_HMAC_SECRET_NEXT")
+        callback = os.getenv("COPILOT_NOTIFICATION_CALLBACK_HMAC_SECRET")
+        callback_next = os.getenv(
+            "COPILOT_NOTIFICATION_CALLBACK_HMAC_SECRET_NEXT"
+        )
         return cls(
             active_secret=active.encode() if active else None,
             next_secret=next_secret.encode() if next_secret else None,
+            notification_callback_secret=callback.encode() if callback else None,
+            notification_callback_next_secret=(
+                callback_next.encode() if callback_next else None
+            ),
             enabled=bool(active),
             mode=os.getenv("COPILOT_INTEGRATION_MODE", "simulated"),
             source_account_ref=os.getenv(
@@ -57,6 +67,17 @@ class IngestIntegrationConfig:
     def verification_secrets(self) -> tuple[bytes, ...]:
         return tuple(
             secret for secret in (self.active_secret, self.next_secret) if secret
+        )
+
+    @property
+    def notification_callback_secrets(self) -> tuple[bytes, ...]:
+        return tuple(
+            secret
+            for secret in (
+                self.notification_callback_secret,
+                self.notification_callback_next_secret,
+            )
+            if secret
         )
 
 

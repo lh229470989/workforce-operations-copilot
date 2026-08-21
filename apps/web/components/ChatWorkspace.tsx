@@ -873,6 +873,65 @@ function IntegrationReview({ actorId }: { actorId: number }) {
   );
 }
 
+type NotificationPreviewItem = {
+  delivery_mode: "simulated";
+  event_id: string;
+  status: string;
+  event: {
+    result: {
+      time_entry_id: number;
+      person_display_name: string;
+      project_display_name: string;
+      work_date: string;
+      hours: string;
+      status: string;
+    };
+  };
+};
+
+function NotificationPreview({ actorId }: { actorId: number }) {
+  const [items, setItems] = useState<NotificationPreviewItem[]>([]);
+  const [notice, setNotice] = useState("");
+
+  async function load() {
+    const response = await fetch(
+      `/api/integration-notifications/preview?actorId=${actorId}`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) {
+      setNotice("Unable to load notification previews.");
+      return;
+    }
+    const payload = (await response.json()) as NotificationPreviewItem[];
+    setItems(payload);
+    setNotice(payload.length ? "" : "No confirmed integration events yet.");
+  }
+
+  return (
+    <details className="privacy-controls notification-preview">
+      <summary>Simulated Slack preview</summary>
+      <small>No Slack request is sent by this public demo.</small>
+      <button type="button" onClick={() => void load()}>
+        Load confirmed events
+      </button>
+      {items.map((item) => (
+        <div className="privacy-preview" key={item.event_id}>
+          <strong>SIMULATED NOTIFICATION · {item.status}</strong>
+          <p>Time entry confirmed</p>
+          <p>
+            {item.event.result.person_display_name} · {item.event.result.project_display_name}
+          </p>
+          <p>
+            {item.event.result.work_date} · {item.event.result.hours} hours · {item.event.result.status}
+          </p>
+          <small>Reference: time entry #{item.event.result.time_entry_id}</small>
+        </div>
+      ))}
+      {notice && <p>{notice}</p>}
+    </details>
+  );
+}
+
 function ReportControls({ actorId }: { actorId: number }) {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -1139,6 +1198,7 @@ export function ChatWorkspace() {
         </div>
         <PrivacyControls actorId={actorId} key={actorId} />
         <IntegrationReview actorId={actorId} key={`integration-${actorId}`} />
+        <NotificationPreview actorId={actorId} key={`notification-${actorId}`} />
         <ReportControls actorId={actorId} key={`report-${actorId}`} />
         <AdminControls actorId={actorId} key={`admin-${actorId}`} />
       </aside>

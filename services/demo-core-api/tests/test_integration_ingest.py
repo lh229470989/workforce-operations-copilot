@@ -16,6 +16,7 @@ from app.models import (
     IntegrationSuggestion,
     IntegrationSuggestionRevision,
     IntegrationSource,
+    IntegrationOutbox,
     ProjectMember,
     TimeEntry,
     TimeEntrySourceLink,
@@ -23,12 +24,14 @@ from app.models import (
 
 
 TEST_SECRET = b"fictional-ingest-test-key"
+CALLBACK_SECRET = b"fictional-callback-test-key"
 
 
 @pytest.fixture
 def integration_client():
     config = IngestIntegrationConfig(
         active_secret=TEST_SECRET,
+        notification_callback_secret=CALLBACK_SECRET,
         enabled=True,
         mode="simulated",
     )
@@ -346,6 +349,12 @@ def test_integration_confirmation_writes_once_and_links_source(integration_clien
         assert link.suggestion_id == suggestion_id
         suggestion = session.get(IntegrationSuggestion, suggestion_id)
         assert suggestion.status == "confirmed"
+        outbox = session.scalar(select(IntegrationOutbox))
+        assert outbox.status == "queued"
+        assert outbox.event_type == "time_entry.confirmed"
+        assert "Confirmed fictional workshop review" not in outbox.payload
+        assert "calendar_id" not in outbox.payload
+        assert json.loads(outbox.payload)["result"]["time_entry_id"] == link.time_entry_id
         audit = session.scalar(
             select(AuditEvent).where(
                 AuditEvent.action == "create_integration_time_entry"
@@ -408,3 +417,104 @@ def test_prepare_and_confirmation_recheck_actor_revision_and_membership(
     assert confirmation.status_code in {409, 422}
     with app.state.session_factory() as session:
         assert session.scalar(select(func.count(TimeEntrySourceLink.id))) == 0
+
+
+def create_confirmed_event(client) -> str:
+    created = ingest_one(client)
+    prepared = client.post(
+        f"/integration-suggestions/{created['suggestion']['suggestion_id']}/prepare",
+        headers={"X-Actor-ID": "3"},
+        json={
+            "project_id": 1,
+            "work_date": created["event"]["work_date"],
+            "hours": "1.50",
+            "description": "Notification fixture review",
+        },
+    ).json()
+    confirmed = client.post(
+        f"/actions/{prepared['confirmation_token']}/confirm",
+        headers={"X-Actor-ID": "3"},
+        json={"confirm": True},
+    )
+    assert confirmed.status_code == 200
+    return confirmed.json()["result"]["notification_event_id"]
+
+
+def signed_callback(path: str, payload: dict):
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    nonce = str(uuid4())
+    timestamp = int(datetime.now(UTC).timestamp())
+    signature = sign_body(
+        CALLBACK_SECRET,
+        timestamp=timestamp,
+        nonce=nonce,
+        method="POST",
+        path=path,
+        body=body,
+    )
+    return body, {
+        "Content-Type": "application/json",
+        "X-Acme-Integration-Id": "n8n-notification-v1",
+        "X-Acme-Timestamp": str(timestamp),
+        "X-Acme-Nonce": nonce,
+        "X-Acme-Signature": signature,
+    }
+
+
+def test_confirmed_event_has_actor_scoped_simulated_preview(integration_client):
+    client, _ = integration_client
+    event_id = create_confirmed_event(client)
+
+    own = client.get(
+        "/integration-notifications/preview", headers={"X-Actor-ID": "3"}
+    )
+    other = client.get(
+        "/integration-notifications/preview", headers={"X-Actor-ID": "2"}
+    )
+
+    assert own.status_code == 200
+    assert own.json()[0]["delivery_mode"] == "simulated"
+    assert own.json()[0]["event_id"] == event_id
+    assert own.json()[0]["event"]["event_type"] == "time_entry.confirmed"
+    assert other.json() == []
+
+
+def test_notification_claim_and_complete_are_persistently_idempotent(
+    integration_client,
+):
+    client, _ = integration_client
+    event_id = create_confirmed_event(client)
+    claim_path = f"/api/v1/integrations/notifications/{event_id}:claim"
+    body, headers = signed_callback(
+        claim_path, {"channel_ref": "portfolio-confirmed"}
+    )
+    claim = client.post(claim_path, content=body, headers=headers)
+
+    assert claim.status_code == 200
+    assert claim.json()["claim_granted"] is True
+    attempt_id = claim.json()["delivery_attempt_id"]
+    body, headers = signed_callback(
+        claim_path, {"channel_ref": "portfolio-confirmed"}
+    )
+    duplicate = client.post(claim_path, content=body, headers=headers)
+    assert duplicate.json() == {
+        "schema_version": "1.0",
+        "claim_granted": False,
+        "status": "sending",
+    }
+
+    complete_path = f"/api/v1/integrations/notifications/{event_id}:complete"
+    body, headers = signed_callback(
+        complete_path,
+        {"delivery_attempt_id": attempt_id, "status": "delivered"},
+    )
+    completed = client.post(complete_path, content=body, headers=headers)
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "delivered"
+
+    body, headers = signed_callback(
+        claim_path, {"channel_ref": "portfolio-confirmed"}
+    )
+    after_delivery = client.post(claim_path, content=body, headers=headers)
+    assert after_delivery.json()["claim_granted"] is False
+    assert after_delivery.json()["status"] == "delivered"

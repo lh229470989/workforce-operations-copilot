@@ -1,6 +1,6 @@
 # SMB Calendar → Copilot → Slack 集成设计
 
-状态：**设计已批准，Contracts、Ingest persistence 与 Web review 已完成，Outbox notification 未开始**
+状态：**设计已批准，Contracts、Ingest persistence、Web review 与 Outbox notification 已完成，n8n templates 未开始**
 
 版本：`v1-approved`
 
@@ -538,7 +538,7 @@ CI 不使用真实凭据。
 1. **Contracts（已完成）**：JSON Schema、Pydantic、HMAC test vectors、fixtures；
 2. **Ingest persistence（已完成）**：suggestion、nonce、source link、idempotency；
 3. **Web review（已完成）**：建议列表、prepare、现有 Core confirmation 复用；
-4. **Outbox notification**：confirmed event、delivery ledger、mock Slack；
+4. **Outbox notification（已完成）**：confirmed event、delivery ledger、mock Slack；
 5. **n8n templates**：两个 JSON、锁定版本导入验证、setup 文档；
 6. **Private adapters**：Google readonly、Slack webhook 和私有录像；
 7. **Portfolio update**：证据、限制、截图和故障恢复说明。

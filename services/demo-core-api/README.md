@@ -61,6 +61,9 @@ All endpoints except `/health` require `X-Actor-ID`.
 | POST | `/api/v1/integrations/work-events:ingest` | Signed WorkEvent ingestion; creates a suggestion only |
 | GET | `/integration-suggestions` | List the current actor's reviewable external suggestions |
 | POST | `/integration-suggestions/{id}/prepare` | Revalidate and create an actor-bound dry-run |
+| GET | `/integration-notifications/preview` | Actor-scoped simulated notification evidence |
+| POST | `/api/v1/integrations/notifications/{event_id}:claim` | Signed, atomic notification delivery claim |
+| POST | `/api/v1/integrations/notifications/{event_id}:complete` | Signed terminal delivery result callback |
 
 ### Two-step write example
 
@@ -119,6 +122,14 @@ prepare step accepts bounded editable business fields and rechecks membership,
 duplicate and daily-hours rules. Confirmation rechecks the current revision and
 atomically creates the time entry plus its unique source link, so a modified or
 already-confirmed Calendar source cannot create a second record.
+
+Integration confirmation also writes a minimal `time_entry.confirmed` outbox
+event in the same transaction. The event omits descriptions, Calendar IDs,
+emails, actor IDs and confirmation tokens. Notification claim/complete calls
+require the separate runtime-only `COPILOT_NOTIFICATION_CALLBACK_HMAC_SECRET`;
+they never reuse the ingest key. A delivery result of `delivery_unknown` is
+terminal and cannot be claimed again automatically. The public UI reads only
+an actor-scoped simulated preview and never calls Slack.
 
 ## Tests
 

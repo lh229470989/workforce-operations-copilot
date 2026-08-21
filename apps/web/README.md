@@ -12,6 +12,8 @@ demo. It provides:
 - single and batch dry-run review cards with a separate explicit confirmation
 - a clearly labeled simulated Calendar suggestion review that still requires a
   server-side dry-run and separate confirmation
+- an actor-scoped simulated Slack-style notification preview that performs no
+  external request
   button;
 - distinct approval/rejection review cards for authorized managers and admins;
 - weekly report summaries with a role-scoped CSV download;
