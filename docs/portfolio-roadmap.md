@@ -220,6 +220,19 @@ Workflow B：confirmed event / webhook
 - 新增 Core API、React 和 Playwright 回归；干净虚构数据卷中的浏览器链路已验证
   Calendar suggestion → dry-run → confirm → simulated Slack preview → duplicate denied。
 
+### Upwork 包装状态（2026-08-21）
+
+- [x] 创建可直接复制的 Project Catalog 标题、摘要、三档范围、客户 requirements、
+  steps、FAQ、proposal opener 和范围排除；
+- [x] 按当前 Upwork 官方规格准备独立的 55 秒英文视频脚本和 gallery 顺序；
+- [x] 明确现有 80 秒 WebM 不能直接作为 Project Catalog 视频；
+- [x] 固定真实与 simulated evidence 的措辞边界；
+- [ ] 生成并上传 `1000 × 750`、4:3 gallery 文件；
+- [ ] 在私有账号环境验证 Google readonly → n8n → Copilot → Slack；
+- [ ] 录制不超过 60 秒、100 MB 的 MP4，并在 Upwork 账号中创建与提交 listing。
+
+完整可复制内容和最终人工清单见 `docs/upwork-project-package.md`。
+
 设计依据：[Google Calendar API 配额与 test-only project](https://developers.google.com/workspace/calendar/api/guides/quota)、
 [Google Calendar OAuth scopes](https://developers.google.com/workspace/calendar/api/auth)、
 [Slack Incoming Webhooks](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/)、
