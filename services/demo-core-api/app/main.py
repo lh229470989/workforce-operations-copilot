@@ -28,6 +28,7 @@ from .database import Base, build_engine, build_session_factory, get_session
 from .integrations.config import IngestIntegrationConfig, sync_integration_config
 from .integrations.contracts import ConfirmedEventV1
 from .integrations.ingest import register_ingest_routes
+from .integrations.mock import register_mock_routes
 from .integrations.notifications import register_notification_routes
 from .models import (
     Approval,
@@ -390,6 +391,7 @@ def create_app(
     )
     app.state.session_factory = session_factory
     register_ingest_routes(app, resolved_integration_config)
+    register_mock_routes(app, resolved_integration_config)
     register_notification_routes(app, resolved_integration_config)
 
     @app.get("/health", tags=["system"])
