@@ -1,0 +1,73 @@
+{
+  "name": "SMB Demo - Google Calendar to Copilot Suggestion",
+  "nodes": [
+    {
+      "parameters": {"rule": {"interval": [{"field": "minutes", "minutesInterval": 15}]}},
+      "id": "199d75bb-fd97-461d-a754-ea54124b35aa",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-720, 0]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {"__rl": true, "value": "={{ $env.GOOGLE_CALENDAR_ID }}", "mode": "id"},
+        "returnAll": false,
+        "limit": 20,
+        "options": {"timeMin": "={{ $now.minus({ minutes: 20 }).toISO() }}", "timeMax": "={{ $now.plus({ days: 1 }).toISO() }}", "singleEvents": true}
+      },
+      "id": "b763d633-c11a-49fe-a888-bd900712bdb5",
+      "name": "Read Dedicated Calendar (readonly credential required)",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [-480, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst secret = $env.COPILOT_INGEST_HMAC_SECRET;\nif (!secret) throw new Error('COPILOT_INGEST_HMAC_SECRET is required');\nconst integrationId = 'n8n-calendar-v1';\nconst endpointPath = '/api/v1/integrations/work-events:ingest';\nconst sourceAccountRef = $env.GOOGLE_SOURCE_ACCOUNT_REF;\nconst calendarRef = $env.GOOGLE_CALENDAR_REF;\nif (!sourceAccountRef || !calendarRef) throw new Error('Google source references are required');\nreturn items.filter(({json:e}) => e.extendedProperties?.private?.acme_work_event === 'v1').map(({json:e}) => {\n  const p = e.extendedProperties.private;\n  const start = new Date(e.start?.dateTime || '');\n  const end = new Date(e.end?.dateTime || '');\n  const duration = Math.round((end - start) / 60000);\n  const event = {schema_version:'1.0',source:'google_calendar',source_account_ref:sourceAccountRef,calendar_id:calendarRef,event_id:String(e.id || ''),event_updated_at:String(e.updated || ''),person_ref:String(p.person_ref || ''),project_code:String(p.project_code || ''),work_date:start.toISOString().slice(0,10),duration_minutes:duration,description:String(p.work_description || '')};\n  if (!/^[a-z0-9-]{3,64}$/.test(event.person_ref) || !/^[A-Z0-9_-]{2,32}$/.test(event.project_code) || !event.event_id || !/^\\d{4}-\\d{2}-\\d{2}T/.test(event.event_updated_at) || duration < 15 || duration > 1440 || duration % 15 || !event.description || event.description.length > 200) throw new Error('Calendar event failed bounded WorkEvent validation');\n  const body = JSON.stringify(event);\n  const timestamp = Math.floor(Date.now()/1000).toString();\n  const nonce = crypto.randomUUID();\n  const bodyHash = crypto.createHash('sha256').update(body).digest('hex');\n  const base = ['v1',timestamp,nonce,'POST',endpointPath,bodyHash].join('\\n');\n  const signature = 'v1=' + crypto.createHmac('sha256',secret).update(base).digest('hex');\n  const revision = crypto.createHash('sha256').update(['gcal:v1',event.calendar_id,event.event_id,event.event_updated_at].join('\\0')).digest('hex');\n  return {json:{body,headers:{'Content-Type':'application/json','X-Acme-Integration-Id':integrationId,'X-Acme-Timestamp':timestamp,'X-Acme-Nonce':nonce,'X-Acme-Idempotency-Key':'sha256:'+revision,'X-Acme-Signature':signature}}};\n});"
+      },
+      "id": "11f28a65-8101-45c6-99d8-d10ad3794305",
+      "name": "Filter Map Validate and Sign WorkEvent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-208, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.COPILOT_INGEST_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [
+          {"name": "Content-Type", "value": "={{ $json.headers['Content-Type'] }}"},
+          {"name": "X-Acme-Integration-Id", "value": "={{ $json.headers['X-Acme-Integration-Id'] }}"},
+          {"name": "X-Acme-Timestamp", "value": "={{ $json.headers['X-Acme-Timestamp'] }}"},
+          {"name": "X-Acme-Nonce", "value": "={{ $json.headers['X-Acme-Nonce'] }}"},
+          {"name": "X-Acme-Idempotency-Key", "value": "={{ $json.headers['X-Acme-Idempotency-Key'] }}"},
+          {"name": "X-Acme-Signature", "value": "={{ $json.headers['X-Acme-Signature'] }}"}
+        ]},
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {"timeout": 10000}
+      },
+      "id": "98a23263-43d0-4f05-9776-a3501c2740d0",
+      "name": "Create Suggestion Only",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [96, 0]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {"main": [[{"node": "Read Dedicated Calendar (readonly credential required)", "type": "main", "index": 0}]]},
+    "Read Dedicated Calendar (readonly credential required)": {"main": [[{"node": "Filter Map Validate and Sign WorkEvent", "type": "main", "index": 0}]]},
+    "Filter Map Validate and Sign WorkEvent": {"main": [[{"node": "Create Suggestion Only", "type": "main", "index": 0}]]}
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "b97567bd-b8cd-4a8e-a1d8-2f4509be8636",
+  "meta": {"templateCredsSetupCompleted": false},
+  "tags": []
+}

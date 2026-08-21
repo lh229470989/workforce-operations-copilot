@@ -17,6 +17,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python scripts/security_scan.py
+      - run: python scripts/scan_n8n_templates.py
 
   dependency-audit:
     runs-on: ubuntu-latest
