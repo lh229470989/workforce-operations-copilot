@@ -759,6 +759,20 @@ function IntegrationReview({ actorId }: { actorId: number }) {
     }
   }
 
+  async function loadFixture() {
+    const response = await fetch("/api/integration-suggestions/mock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actorId }),
+    });
+    if (response.ok) {
+      await load();
+      return;
+    }
+    const payload = (await response.json()) as { detail?: string };
+    setNotice(payload.detail ?? "The simulated fixture could not be loaded.");
+  }
+
   async function prepare() {
     if (!selected) return;
     const response = await fetch(
@@ -807,8 +821,12 @@ function IntegrationReview({ actorId }: { actorId: number }) {
     <details className="privacy-controls integration-review">
       <summary>Simulated Calendar review</summary>
       <small>
-        Calendar input can only create a suggestion. Review and confirm separately.
+        Simulated integration: no Google account is connected. Calendar input can
+        only create a suggestion; review and confirm separately.
       </small>
+      <button type="button" onClick={() => void loadFixture()}>
+        Load fictional Calendar event
+      </button>
       <button type="button" onClick={() => void load()}>
         Load my suggestions
       </button>

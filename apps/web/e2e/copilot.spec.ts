@@ -45,3 +45,24 @@ test("shows admin-only audit controls for the admin persona", async ({ page }) =
   await page.getByRole("button", { name: "Load audit events" }).click();
   await expect(page.getByText("Metadata-only agent executions")).toBeVisible();
 });
+
+test("completes the simulated Calendar to confirmation to Slack-preview path once", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Simulated Calendar review").click();
+  await expect(page.getByText(/no Google account is connected/i)).toBeVisible();
+  await page.getByRole("button", { name: "Load fictional Calendar event" }).click();
+  await expect(page.getByText("Google Calendar · simulated")).toBeVisible();
+  await page.getByRole("button", { name: "Prepare dry-run" }).click();
+  await expect(page.getByText("DRY RUN · Calendar suggestion")).toBeVisible();
+  await page.getByRole("button", { name: "Explicitly confirm" }).click();
+  await expect(page.getByText(/Time entry confirmed from the simulated/)).toBeVisible();
+
+  await page.getByText("Simulated Slack preview").click();
+  await page.getByRole("button", { name: "Load confirmed events" }).click();
+  await expect(page.getByText("SIMULATED NOTIFICATION · queued")).toBeVisible();
+  await expect(page.getByText("Jamie Rivera · Apollo")).toBeVisible();
+  await expect(page.getByText(/No Slack request is sent/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Load fictional Calendar event" }).click();
+  await expect(page.getByText("This simulated Calendar event is already confirmed")).toBeVisible();
+});

@@ -207,6 +207,19 @@ Workflow B：confirmed event / webhook
   `Successfully imported 2 workflows`；真实 Google/Slack 执行只在后续私有录制
   环境中完成，不作为公共 Demo 或 CI 的前置条件。
 
+### Public mock 实施证据（2026-08-21）
+
+- Jamie persona 可以从 Web 显式加载一个固定的虚构 Calendar 事件；页面同时声明
+  没有连接 Google 账号，后端不会发外网请求；
+- mock 复用正式的 suggestion、prepare、actor-bound confirmation、source link 和
+  confirmed outbox 边界，而不是直接插入工时或伪造 Slack 成功；
+- 同一 fixture 在确认前只返回同一 suggestion，确认后再次加载返回 `409`，不能
+  创建第二条工时；
+- public mode 启动时如果发现 ingest 或 notification secret 会直接拒绝启动；私有
+  真实测试必须显式关闭 public mock；
+- 新增 Core API、React 和 Playwright 回归；干净虚构数据卷中的浏览器链路已验证
+  Calendar suggestion → dry-run → confirm → simulated Slack preview → duplicate denied。
+
 设计依据：[Google Calendar API 配额与 test-only project](https://developers.google.com/workspace/calendar/api/guides/quota)、
 [Google Calendar OAuth scopes](https://developers.google.com/workspace/calendar/api/auth)、
 [Slack Incoming Webhooks](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/)、

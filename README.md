@@ -20,6 +20,7 @@ tests, and local deployment path.
 | Grounded policy answer | `What is the weekly time submission deadline policy?` | The answer includes inspectable fictional policy sources instead of unsupported model text. |
 | Permission boundary | As Jamie, ask `Can I approve my team's pending time entries?` | The employee is refused the manager action while still receiving useful, role-scoped information. |
 | Review-first write | `Draft 1 hour on Apollo for 2026-12-18, description: portfolio demo` | The system returns a dry-run and server-issued confirmation step; nothing is written before a separate click. |
+| Simulated SMB integration | Open `Simulated Calendar review`, load the fictional event, prepare and confirm it, then open `Simulated Slack preview` | The full integration lifecycle works without external accounts; duplicate input cannot create a second time entry. |
 
 ▶ [Watch the 80-second product walkthrough](https://github.com/lh229470989/workforce-operations-copilot/releases/download/portfolio-demo-v1/workforce-operations-copilot-demo.webm)
 or [open the recording script and shot list](docs/portfolio-demo.md).
@@ -33,6 +34,9 @@ or [open the recording script and shot list](docs/portfolio-demo.md).
   re-authorization, and an audit record.
 - **Inspectable integration surface:** FastAPI services, server-side Next.js
   proxying, MCP 2.0 Streamable HTTP, health endpoints, and Docker Compose.
+- **Reusable automation templates:** two disabled, credential-free n8n `2.34.6`
+  workflows cover read-only Calendar ingest and claim-before-send Slack delivery;
+  the public UI runs only their explicitly labeled mock equivalent.
 - **Delivery evidence:** 120 authored Agent/RAG/security benchmark cases,
   Python and React tests, Playwright browser checks, container builds,
   dependency audit, and publication security scan in CI.
@@ -99,6 +103,8 @@ routing is never presented as model output. More detail is in the
 - Actor-bound short sessions, privacy controls, bounded history, explicit
   memories, and hot-reloadable knowledge documents.
 - Read/resource/prompt MCP operations plus preview-only write tools.
+- Simulated Calendar → suggestion → confirmation → Slack-preview browser path,
+  plus two import-validated n8n templates for private test environments.
 
 ## Architecture and trust boundary
 
@@ -127,6 +133,7 @@ Start with the [documentation index](docs/README.md), or go directly to:
 
 ```bash
 python3 scripts/security_scan.py
+python3 scripts/scan_n8n_templates.py
 
 cd services/demo-core-api && pytest
 cd services/ai-api && pytest
@@ -145,8 +152,9 @@ include `/health`, `/ready`, `/observability`, and `/metrics`.
 ## Known limits
 
 - The included workforce system and all data are synthetic.
-- This repository currently has no live public demo and no real third-party
-  Calendar, Slack, or Email integration.
+- This repository currently has no hosted public URL. Its public-mode integration
+  is simulated; real Google Calendar and Slack execution is reserved for an
+  isolated private test environment and has not yet been published as evidence.
 - Authentication is represented by switchable demo personas, not production
   OIDC/SSO or multi-tenant identity.
 - MCP write tools stop at preview; confirmation stays in the trusted application.

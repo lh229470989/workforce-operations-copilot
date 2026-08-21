@@ -157,6 +157,40 @@ describe("ChatWorkspace", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("loads only a clearly labeled fictional Calendar fixture", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        suggestion_id: "77777777-7777-4777-8777-777777777777",
+        created: true,
+        mode: "simulated",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{
+        id: "77777777-7777-4777-8777-777777777777",
+        source_label: "Google Calendar · simulated",
+        status: "suggested",
+        project_id: 1,
+        project_name: "Apollo",
+        work_date: "2026-08-20",
+        hours: "1.50",
+        description: "Prepared fictional customer workshop",
+        expires_at: "2026-09-04T10:00:00Z",
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const user = userEvent.setup();
+    render(<ChatWorkspace />);
+
+    await user.click(screen.getByText("Simulated Calendar review"));
+    expect(screen.getByText(/no Google account is connected/i)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Load fictional Calendar event" }));
+
+    expect(await screen.findByText("Google Calendar · simulated")).toBeVisible();
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/integration-suggestions/mock",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("labels confirmed notification evidence as simulated", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify([{
       delivery_mode: "simulated",

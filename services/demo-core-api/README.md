@@ -60,6 +60,7 @@ All endpoints except `/health` require `X-Actor-ID`.
 | POST | `/actions/{token}/confirm` | Explicitly confirm a preview |
 | POST | `/api/v1/integrations/work-events:ingest` | Signed WorkEvent ingestion; creates a suggestion only |
 | GET | `/integration-suggestions` | List the current actor's reviewable external suggestions |
+| POST | `/integration-suggestions/mock` | Idempotently load one fictional public Calendar suggestion |
 | POST | `/integration-suggestions/{id}/prepare` | Revalidate and create an actor-bound dry-run |
 | GET | `/integration-notifications/preview` | Actor-scoped simulated notification evidence |
 | POST | `/api/v1/integrations/notifications/{event_id}:claim` | Signed, atomic notification delivery claim |
@@ -116,6 +117,13 @@ Source account and Calendar identifiers are stored only as SHA-256 hashes.
 Runtime secrets are never stored in SQLite. The optional
 `COPILOT_INGEST_HMAC_SECRET_NEXT` supports a bounded key-rotation window. Public
 CI uses fictional fixed keys and fixtures only.
+
+The public demo instead exposes an authenticated, actor-scoped mock loader. It
+creates one deterministic fictional Calendar suggestion and makes no external
+request. Repeating the loader returns the same suggestion; after confirmation it
+returns `409` and cannot create a second time entry. With
+`COPILOT_PUBLIC_MOCK_ENABLED=true`, startup refuses ingest or notification
+secrets. A private real-account environment must explicitly set it to `false`.
 
 The review endpoint only returns suggestions owned by the current actor. The
 prepare step accepts bounded editable business fields and rechecks membership,

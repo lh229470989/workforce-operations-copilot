@@ -5,6 +5,7 @@ services:
     environment:
       DEMO_DATABASE_URL: sqlite:////app/data/demo.db
       BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-Asia/Shanghai}
+      COPILOT_PUBLIC_MOCK_ENABLED: "true"
     ports:
       - "8001:8000"
     volumes:

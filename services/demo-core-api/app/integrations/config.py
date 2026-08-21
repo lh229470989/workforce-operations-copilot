@@ -29,6 +29,7 @@ class IngestIntegrationConfig:
     notification_callback_next_secret: bytes | None = None
     enabled: bool = False
     mode: str = "simulated"
+    public_mock_enabled: bool = True
     source_account_ref: str = "google-test-account-01"
     calendar_id: str = "portfolio-work-calendar"
     person_mappings: dict[str, int] = field(
@@ -46,6 +47,13 @@ class IngestIntegrationConfig:
         callback_next = os.getenv(
             "COPILOT_NOTIFICATION_CALLBACK_HMAC_SECRET_NEXT"
         )
+        public_mock_enabled = os.getenv(
+            "COPILOT_PUBLIC_MOCK_ENABLED", "true"
+        ).lower() == "true"
+        if public_mock_enabled and (active or next_secret or callback or callback_next):
+            raise RuntimeError(
+                "Public simulated integration refuses real integration secrets"
+            )
         return cls(
             active_secret=active.encode() if active else None,
             next_secret=next_secret.encode() if next_secret else None,
@@ -55,6 +63,7 @@ class IngestIntegrationConfig:
             ),
             enabled=bool(active),
             mode=os.getenv("COPILOT_INTEGRATION_MODE", "simulated"),
+            public_mock_enabled=public_mock_enabled,
             source_account_ref=os.getenv(
                 "COPILOT_SOURCE_ACCOUNT_REF", "google-test-account-01"
             ),
@@ -94,7 +103,9 @@ def sync_integration_config(
         session.add(source)
     source.source_account_ref_hash = hash_reference(config.source_account_ref)
     source.calendar_id_hash = hash_reference(config.calendar_id)
-    source.enabled = config.enabled
+    source.enabled = config.enabled or (
+        config.public_mock_enabled and config.mode == "simulated"
+    )
     source.mode = config.mode
 
     person_delete = delete(IntegrationPersonMapping).where(
